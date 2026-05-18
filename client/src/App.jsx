@@ -1,11 +1,15 @@
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import SpendPage from "./pages/Spend";
+
 function App() {
   return (
-    <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-      <h1 className="text-3xl font-bold text-blue-500">
-        Spend Management
-      </h1>
-    </div>
-  )
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Navigate to="/spend" replace />} />
+        <Route path="/spend" element={<SpendPage />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }
 
-export default App
+export default App;
