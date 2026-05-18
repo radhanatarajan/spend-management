@@ -1,0 +1,24 @@
+services:
+  db:
+    image: mysql:8
+    container_name: spend-db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: secret
+      MYSQL_DATABASE: spend_management
+      MYSQL_USER: spend_user
+      MYSQL_PASSWORD: spend_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+
+  redis:
+    image: redis:7-alpine
+    container_name: spend-redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+volumes:
+  db_data:
