@@ -11,6 +11,7 @@ import ForecastingPage from "./pages/Forecasting/ForecastingPage";
 import SpendReportPage from "./pages/Reports/SpendReportPage";
 import ForecastReportPage from "./pages/Reports/ForecastReportPage";
 import BudgetReportPage from "./pages/Reports/BudgetReportPage";
+import ContractReportPage from "./pages/Reports/ContractReportPage";
 
 function App() {
   return (
@@ -30,7 +31,8 @@ function App() {
                     <Route path="/budget-planning"       element={<BudgetPlanningPage />} />
                     <Route path="/forecasting"           element={<ForecastingPage />} />
                     <Route path="/reports"               element={<Navigate to="/reports/spend" replace />} />
-                    <Route path="/reports/spend"         element={<SpendReportPage />} />
+                    <Route path="/reports/spend"          element={<SpendReportPage />} />
+                    <Route path="/reports/contracts"     element={<ContractReportPage />} />
                     <Route path="/reports/forecast"      element={<ForecastReportPage />} />
                     <Route path="/reports/budget"        element={<BudgetReportPage />} />
                   </Routes>

@@ -51,9 +51,10 @@ const NAV_ITEMS = [
 ];
 
 const REPORT_ITEMS = [
-  { to: "/reports/spend",    label: "Spend Report" },
-  { to: "/reports/forecast", label: "Forecast Report", disabled: true },
-  { to: "/reports/budget",   label: "Budget Report",   disabled: true },
+  { to: "/reports/spend",      label: "Spend Report" },
+  { to: "/reports/contracts",  label: "Contract Report" },
+  { to: "/reports/forecast",   label: "Forecast Report", disabled: true },
+  { to: "/reports/budget",     label: "Budget Report",   disabled: true },
 ];
 
 const ROLE_BADGE = {

@@ -1,13 +1,14 @@
 import random
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 
 from src.db.base import Base
 from src.db.session import engine, SessionLocal
-from src.models import spend as _spend_module  # noqa: F401 — registers Spend with Base.metadata
-from src.models import user as _user_module    # noqa: F401 — registers User with Base.metadata
+from src.models import spend as _spend_module     # noqa: F401 — registers Spend with Base.metadata
+from src.models import user as _user_module       # noqa: F401 — registers User with Base.metadata
+from src.models import contract as _contract_module  # noqa: F401 — registers Contract/ContractLine with Base.metadata
 
 
 EXPENSE_TYPES = ["Capex", "Opex", "Travel", "Professional Services", "Marketing"]
@@ -86,8 +87,43 @@ def _last_n_months(n: int) -> list[int]:
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    _migrate_contract_lines()
     _seed_db()
     _seed_users()
+    _seed_contracts()
+
+
+def _migrate_contract_lines() -> None:
+    """Add billing_interval and entered_amount columns if missing (idempotent, MySQL-compatible)."""
+    with engine.connect() as conn:
+        # No-op if table doesn't exist yet — create_all will build it with all columns
+        table_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'contract_lines'"
+        )).scalar()
+        if not table_exists:
+            return
+
+        existing = {
+            row[0] for row in conn.execute(text(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'contract_lines'"
+            ))
+        }
+
+        if "billing_interval" not in existing:
+            conn.execute(text(
+                "ALTER TABLE contract_lines ADD COLUMN billing_interval "
+                "ENUM('monthly','quarterly','yearly','custom') NOT NULL DEFAULT 'monthly'"
+            ))
+        if "entered_amount" not in existing:
+            conn.execute(text(
+                "ALTER TABLE contract_lines ADD COLUMN entered_amount DECIMAL(14,2)"
+            ))
+            conn.execute(text(
+                "UPDATE contract_lines SET entered_amount = monthly_amount WHERE entered_amount IS NULL"
+            ))
+        conn.commit()
 
 
 def _seed_users() -> None:
@@ -159,6 +195,96 @@ def _seed_db() -> None:
             )
 
         db.add_all(rows)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _seed_contracts() -> None:
+    from src.models.contract import Contract, ContractLine, ContractStatus, BillingInterval
+    from src.schemas.contract import compute_monthly_amount
+
+    db = SessionLocal()
+    try:
+        count = db.execute(select(func.count()).select_from(Contract)).scalar_one()
+        if count > 0:
+            return
+
+        seed_data = [
+            # Monthly billing — entered_amount IS the monthly rate
+            {
+                "vendor_name": "Salesforce",
+                "description": "Enterprise CRM platform — 3-year site license",
+                "oracle_department": "1200",
+                "oracle_department_name": "Sales",
+                "oracle_account_number": "ACC-6385",
+                "oracle_account_sub_group": "Software Licenses",
+                "purchase_order_number": "PO-83353",
+                "status": ContractStatus.ACTIVE,
+                "lines": [
+                    {"po_line_number": 4, "period_start": date(2026, 5, 1), "period_end": date(2027, 4, 30), "billing_interval": BillingInterval.MONTHLY, "entered_amount": Decimal("67888.29")},
+                    {"po_line_number": 5, "period_start": date(2027, 5, 1), "period_end": date(2028, 4, 30), "billing_interval": BillingInterval.MONTHLY, "entered_amount": Decimal("68888.29")},
+                    {"po_line_number": 6, "period_start": date(2028, 5, 1), "period_end": date(2029, 4, 30), "billing_interval": BillingInterval.MONTHLY, "entered_amount": Decimal("69888.29")},
+                ],
+            },
+            # Quarterly billing — entered_amount is per-quarter; monthly = /3
+            {
+                "vendor_name": "GitHub",
+                "description": "Enterprise source control & CI/CD — 2-year contract",
+                "oracle_department": "1100",
+                "oracle_department_name": "Engineering",
+                "oracle_account_number": "ACC-6401",
+                "oracle_account_sub_group": "Software Licenses",
+                "purchase_order_number": "PO-91200",
+                "status": ContractStatus.ACTIVE,
+                "lines": [
+                    {"po_line_number": 1, "period_start": date(2026, 1, 1), "period_end": date(2026, 12, 31), "billing_interval": BillingInterval.QUARTERLY, "entered_amount": Decimal("37500.00")},
+                    {"po_line_number": 2, "period_start": date(2027, 1, 1), "period_end": date(2027, 12, 31), "billing_interval": BillingInterval.QUARTERLY, "entered_amount": Decimal("39000.00")},
+                ],
+            },
+            # Yearly billing — entered_amount is the annual fee; monthly = /12
+            {
+                "vendor_name": "Workday",
+                "description": "HR & Finance SaaS platform — annual renewal",
+                "oracle_department": "1600",
+                "oracle_department_name": "HR",
+                "oracle_account_number": "ACC-5510",
+                "oracle_account_sub_group": "Software Licenses",
+                "purchase_order_number": "PO-77040",
+                "status": ContractStatus.ACTIVE,
+                "lines": [
+                    {"po_line_number": 1, "period_start": date(2026, 4, 1), "period_end": date(2027, 3, 31), "billing_interval": BillingInterval.YEARLY, "entered_amount": Decimal("264000.00")},
+                ],
+            },
+            # Custom billing — entered_amount is the total for the full period; monthly = total / months
+            {
+                "vendor_name": "Tableau",
+                "description": "BI & analytics platform — expired 3-year deal",
+                "oracle_department": "1300",
+                "oracle_department_name": "Finance",
+                "oracle_account_number": "ACC-6110",
+                "oracle_account_sub_group": "Software Licenses",
+                "purchase_order_number": "PO-60301",
+                "status": ContractStatus.EXPIRED,
+                "lines": [
+                    {"po_line_number": 1, "period_start": date(2023, 1, 1), "period_end": date(2023, 12, 31), "billing_interval": BillingInterval.CUSTOM, "entered_amount": Decimal("100800.00")},
+                    {"po_line_number": 2, "period_start": date(2024, 1, 1), "period_end": date(2024, 12, 31), "billing_interval": BillingInterval.CUSTOM, "entered_amount": Decimal("104400.00")},
+                    {"po_line_number": 3, "period_start": date(2025, 1, 1), "period_end": date(2025, 12, 31), "billing_interval": BillingInterval.CUSTOM, "entered_amount": Decimal("108000.00")},
+                ],
+            },
+        ]
+
+        for item in seed_data:
+            lines_data = item.pop("lines")
+            contract = Contract(**item)
+            for ld in lines_data:
+                line = ContractLine(**ld)
+                line.monthly_amount = compute_monthly_amount(
+                    line.entered_amount, line.billing_interval, line.period_start, line.period_end
+                )
+                contract.lines.append(line)
+            db.add(contract)
+
         db.commit()
     finally:
         db.close()
