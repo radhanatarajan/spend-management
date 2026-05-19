@@ -1,6 +1,10 @@
+import csv
+import io
+from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, distinct
 from sqlalchemy.orm import Session
 
@@ -12,6 +16,9 @@ from src.schemas.spend import (
     SpendFilterOptions,
     MonthOption,
     OracleDeptOption,
+    SpendSummary,
+    AmountByLabel,
+    MonthTrend,
 )
 
 router = APIRouter(prefix="/api/spend", tags=["spend"])
@@ -172,4 +179,136 @@ def get_filter_options(
         oracle_account_groups=list(group_vals),
         vendors=list(vendor_vals),
         je_sources=list(je_vals),
+    )
+
+
+_COMMON_QUERY_PARAMS = dict(
+    month_keys=(Optional[List[int]], Query(None)),
+    expense_types=(Optional[List[str]], Query(None)),
+    company_codes=(Optional[List[str]], Query(None)),
+    oracle_departments=(Optional[List[str]], Query(None)),
+    oracle_account_groups=(Optional[List[str]], Query(None)),
+    vendors=(Optional[List[str]], Query(None)),
+    je_sources=(Optional[List[str]], Query(None)),
+)
+
+
+@router.get("/summary", response_model=SpendSummary)
+def get_spend_summary(
+    month_keys: Optional[List[int]] = Query(None),
+    expense_types: Optional[List[str]] = Query(None),
+    company_codes: Optional[List[str]] = Query(None),
+    oracle_departments: Optional[List[str]] = Query(None),
+    oracle_account_groups: Optional[List[str]] = Query(None),
+    vendors: Optional[List[str]] = Query(None),
+    je_sources: Optional[List[str]] = Query(None),
+    db: Session = Depends(get_db),
+):
+    fk = dict(
+        month_keys=month_keys, expense_types=expense_types, company_codes=company_codes,
+        oracle_departments=oracle_departments, oracle_account_groups=oracle_account_groups,
+        vendors=vendors, je_sources=je_sources,
+    )
+    clauses = _where_clauses(**fk)
+
+    total_amount = db.execute(
+        select(func.coalesce(func.sum(Spend.amount_usd), 0)).where(*clauses)
+    ).scalar_one() or Decimal(0)
+
+    total_transactions = db.execute(
+        select(func.count(Spend.id)).where(*clauses)
+    ).scalar_one()
+
+    def _pct(amount) -> float:
+        if not total_amount:
+            return 0.0
+        return round(float(amount) / float(total_amount) * 100, 1)
+
+    grp_rows = db.execute(
+        select(Spend.oracle_account_group, func.sum(Spend.amount_usd))
+        .where(*clauses)
+        .group_by(Spend.oracle_account_group)
+        .order_by(func.sum(Spend.amount_usd).desc())
+    ).all()
+
+    vendor_rows = db.execute(
+        select(Spend.vendor_name, func.sum(Spend.amount_usd))
+        .where(*clauses)
+        .group_by(Spend.vendor_name)
+        .order_by(func.sum(Spend.amount_usd).desc())
+        .limit(8)
+    ).all()
+
+    dept_rows = db.execute(
+        select(Spend.oracle_department_name, func.sum(Spend.amount_usd))
+        .where(*clauses)
+        .group_by(Spend.oracle_department_name)
+        .order_by(func.sum(Spend.amount_usd).desc())
+    ).all()
+
+    month_rows = db.execute(
+        select(Spend.month_key, Spend.month_label, func.sum(Spend.amount_usd))
+        .where(*clauses)
+        .group_by(Spend.month_key, Spend.month_label)
+        .order_by(Spend.month_key)
+    ).all()
+
+    return SpendSummary(
+        total_amount=total_amount,
+        total_transactions=total_transactions,
+        by_account_group=[AmountByLabel(label=r[0], amount=r[1], pct=_pct(r[1])) for r in grp_rows],
+        by_vendor=[AmountByLabel(label=r[0], amount=r[1], pct=_pct(r[1])) for r in vendor_rows],
+        by_department=[AmountByLabel(label=r[0], amount=r[1], pct=_pct(r[1])) for r in dept_rows],
+        by_month=[MonthTrend(month_key=r[0], month_label=r[1], amount=r[2]) for r in month_rows],
+    )
+
+
+@router.get("/export")
+def export_spend_csv(
+    month_keys: Optional[List[int]] = Query(None),
+    expense_types: Optional[List[str]] = Query(None),
+    company_codes: Optional[List[str]] = Query(None),
+    oracle_departments: Optional[List[str]] = Query(None),
+    oracle_account_groups: Optional[List[str]] = Query(None),
+    vendors: Optional[List[str]] = Query(None),
+    je_sources: Optional[List[str]] = Query(None),
+    db: Session = Depends(get_db),
+):
+    fk = dict(
+        month_keys=month_keys, expense_types=expense_types, company_codes=company_codes,
+        oracle_departments=oracle_departments, oracle_account_groups=oracle_account_groups,
+        vendors=vendors, je_sources=je_sources,
+    )
+    clauses = _where_clauses(**fk)
+
+    rows = db.execute(
+        select(Spend)
+        .where(*clauses)
+        .order_by(Spend.month_key.desc(), Spend.id)
+    ).scalars().all()
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "Month", "Expense Type", "Company Code", "Oracle Org", "Account Number",
+        "Dept Code", "Dept Name", "Cost Center Hierarchy", "Account Group",
+        "Account Sub Group", "Cost Element", "Line Description", "Vendor",
+        "PO Recon", "PO Description", "PO Number", "PO Line",
+        "Invoice Number", "Invoice Line", "JE Source", "Amount USD",
+    ])
+    for r in rows:
+        writer.writerow([
+            r.month_label, r.expense_type, r.company_code, r.oracle_organization,
+            r.oracle_account_number, r.oracle_department, r.oracle_department_name,
+            r.oracle_cost_center_hierarchy, r.oracle_account_group, r.oracle_account_sub_group,
+            r.oracle_cost_element, r.line_desc, r.vendor_name,
+            r.po_recon, r.po_description, r.purchase_order_number, r.purchase_order_line_number,
+            r.invoice_number, r.invoice_line_number, r.je_source, float(r.amount_usd),
+        ])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=spend_export.csv"},
     )

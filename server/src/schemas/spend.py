@@ -60,3 +60,24 @@ class SpendFilterOptions(BaseModel):
     oracle_account_groups: List[str]
     vendors: List[str]
     je_sources: List[str]
+
+
+class AmountByLabel(BaseModel):
+    label: str
+    amount: Decimal
+    pct: float
+
+
+class MonthTrend(BaseModel):
+    month_key: int
+    month_label: str
+    amount: Decimal
+
+
+class SpendSummary(BaseModel):
+    total_amount: Decimal
+    total_transactions: int
+    by_account_group: List[AmountByLabel]
+    by_vendor: List[AmountByLabel]
+    by_department: List[AmountByLabel]
+    by_month: List[MonthTrend]

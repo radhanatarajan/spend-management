@@ -26,7 +26,7 @@ A Finance Ops platform for tracking spend, managing contracts, planning budgets,
 make dev-db
 ```
 
-Starts MySQL 8 and Redis via Docker Compose on `localhost:3306`.
+Starts MySQL 8 via Docker Compose on `localhost:3306`.
 
 ### 2. Start the API server
 
@@ -36,8 +36,9 @@ make dev-api
 
 FastAPI starts at `http://localhost:8000`. On first run it automatically:
 - Creates all database tables
-- Seeds 150 spend transactions
+- Seeds ~150 spend transactions
 - Seeds one user per role (see credentials below)
+- Seeds 4 sample contracts (Salesforce, GitHub, Workday, Tableau)
 
 ### 3. Start the frontend
 
@@ -51,118 +52,93 @@ Vite starts at `http://localhost:5173`.
 
 ## User Roles & Credentials
 
-The app has four roles with different levels of access. Seed accounts are created automatically on first startup.
-
 | Role | Email | Password | Access Level |
 |---|---|---|---|
-| **Admin** | admin@example.com | admin123 | Full access — manage users, all data, all settings |
-| **Biz Admin** | bizadmin@example.com | bizadmin123 | Business-level write access — edit spend, contracts, budgets |
-| **Service Owner** | serviceowner@example.com | serviceowner123 | Write access scoped to their own services/cost centers |
+| **Admin** | admin@example.com | admin123 | Full access |
+| **Biz Admin** | bizadmin@example.com | bizadmin123 | Business-level write access |
+| **Service Owner** | serviceowner@example.com | serviceowner123 | Write access scoped to their own services |
 | **Read Only** | readonly@example.com | readonly123 | View all data, no edits |
-
-### Role Capabilities
 
 | Feature | Admin | Biz Admin | Service Owner | Read Only |
 |---|:---:|:---:|:---:|:---:|
-| View spend data | ✓ | ✓ | ✓ | ✓ |
-| View contracts | ✓ | ✓ | ✓ | ✓ |
+| View spend & contracts | ✓ | ✓ | ✓ | ✓ |
 | Edit / upload data | ✓ | ✓ | ✓ (own scope) | — |
 | Manage budgets | ✓ | ✓ | — | — |
 | Manage users | ✓ | — | — | — |
-
-> These are the intended access boundaries. Backend guards (`require_admin`, `require_biz_admin`, `require_write`) enforce them at the API level.
 
 ---
 
 ## Pages
 
 ### Spend Analytics (`/spend`)
-
-See the [Spend Page](#spend-page) section below for full details.
+Interactive GL spend table with cross-dependent slicers (Month, Expense Type, Company Code, Department, Account Group, Vendor, JE Source), multi-column sorting, and pagination. KPI summary strip updates in real time.
 
 ### Contract Database (`/contracts`)
-Planned — tracks vendor contracts, renewal dates, and spend commitments.
-
-### Budget Planning (`/budget-planning`)
-Planned — set and track budgets by department, cost center, or account group.
-
-### Forecasting (`/forecasting`)
-Planned — project future spend based on historical trends.
+Full CRUD for multi-year software license contracts. Contracts are grouped by Vendor + Department + Account + PO Number. Each PO can have multiple lines (one per service year) with configurable billing intervals (Monthly, Quarterly, Annual, Custom). Consecutive lines are detected and badged as multi-year.
 
 ### Reports (`/reports`)
-Planned — exportable summaries and executive dashboards.
+
+| Report | Path | Status |
+|---|---|---|
+| Spend Report | `/reports/spend` | Live |
+| Contract Report | `/reports/contracts` | Live |
+| Forecast Report | `/reports/forecast` | Coming soon |
+| Budget Report | `/reports/budget` | Coming soon |
+
+**Spend Report** — KPI cards, monthly trend chart, spend-by-account-group donut, top vendors bar chart, insights panel, and CSV export.
+
+**Contract Report** — Multi-year contracts only. Monthly dollar breakout across a calendar fiscal year. Months beyond the last signed PO line are projected at 100% renewal (shown in amber italic). Multi-select slicers for Vendor, Department, and Status.
+
+### Budget Planning (`/budget-planning`)
+Planned.
+
+### Forecasting (`/forecasting`)
+Planned.
 
 ---
 
-## Spend Page
+## Contract Billing Intervals
 
-The Spend Analytics page (`/spend`) is a fully interactive table covering all Oracle-aligned GL spend data.
-
-### Columns
-
-| Column | Field | Notes |
+| Interval | Entered Amount | Monthly Amount |
 |---|---|---|
-| Month | `month_label` | Derived from `month_key` (YYYYMM integer) |
-| Expense Type | `expense_type` | e.g. Capex, Opex, Travel |
-| Co. Code | `company_code` | Oracle company code |
-| Oracle › Org | `oracle_organization` | Business unit |
-| Oracle › Acct. No. | `oracle_account_number` | GL account number |
-| Oracle Dept › Code | `oracle_department` | Department code |
-| Oracle Dept › Name | `oracle_department_name` | Department name |
-| Hierarchy | `oracle_cost_center_hierarchy` | Cost center rollup path |
-| Oracle Account › Group | `oracle_account_group` | e.g. R&D, S&M, G&A |
-| Oracle Account › Sub Group | `oracle_account_sub_group` | Sub-classification |
-| Cost Element | `oracle_cost_element` | e.g. Salaries, Licenses |
-| Line Desc. | `line_desc` | Free-text line description |
-| Vendor | `vendor_name` | Supplier name |
-| PO | `po_recon` | PO reconciliation code (hover for description) |
-| PO Number | `purchase_order_number` | |
-| PO Line | `purchase_order_line_number` | |
-| Invoice No. | `invoice_number` | |
-| Invoice Line | `invoice_line_number` | |
-| JE Source | `je_source` | Journal entry source (e.g. Coupa, Concur) |
-| $ | `amount_usd` | USD amount, right-aligned |
-
-The table uses a **grouped two-row header** to visually cluster Oracle, Oracle Dept, and Oracle Account columns.
-
-### Filters
-
-Each filter is a dropdown slicer showing distinct values from the data. Filters are **cross-dependent** — selecting a value in one slicer narrows the options in all others based on what's actually in the data.
-
-| Filter | Field |
-|---|---|
-| Month | `month_key` |
-| Expense Type | `expense_type` |
-| Company Code | `company_code` |
-| Oracle Department | `oracle_department` |
-| Account Group | `oracle_account_group` |
-| Vendor | `vendor_name` |
-| JE Source | `je_source` |
-
-- Select one, multiple, or all values per slicer
-- Click **Apply Filters** to update the table
-- Click **Clear** inside any slicer to reset it
-
-### Sorting & Pagination
-
-- Click any column header to sort ascending; click again to sort descending
-- Default page size: 50 rows
-- Page controls at the bottom of the table
+| Monthly | Per-month charge | = entered amount |
+| Quarterly | Per-quarter charge | ÷ 3 |
+| Annual | Per-year charge | ÷ 12 |
+| Custom (total) | Total for full period | ÷ months in period |
 
 ---
 
 ## API Reference
 
-Base URL: `http://localhost:8000`
+Base URL: `http://localhost:8000` — Interactive docs at `http://localhost:8000/docs`
 
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/api/auth/login` | Returns JWT + user object |
-| `GET` | `/api/auth/me` | Returns current user (requires auth) |
-| `GET` | `/api/spend/transactions` | Paginated, filtered, sorted spend list |
-| `GET` | `/api/spend/filter-options` | Distinct slicer values (cross-filtered) |
+| `GET` | `/api/auth/me` | Current user (requires auth) |
+| `GET` | `/api/spend/transactions` | Paginated, filtered, sorted spend |
+| `GET` | `/api/spend/filter-options` | Cross-filtered slicer values |
+| `GET` | `/api/contracts` | List all contracts with lines |
+| `POST` | `/api/contracts` | Create contract with optional lines |
+| `GET` | `/api/contracts/{id}` | Get a single contract |
+| `PUT` | `/api/contracts/{id}` | Update contract header |
+| `DELETE` | `/api/contracts/{id}` | Delete contract and all lines |
+| `POST` | `/api/contracts/{id}/lines` | Add a line to a contract |
+| `PUT` | `/api/contracts/{id}/lines/{line_id}` | Update a line |
+| `DELETE` | `/api/contracts/{id}/lines/{line_id}` | Remove a line |
+| `GET` | `/api/contracts/report?fiscal_year={year}` | Monthly breakout report |
 
-Interactive docs available at `http://localhost:8000/docs`.
+---
+
+## Detailed Guides
+
+Full feature documentation is in the [`docs/`](docs/) folder:
+
+| Document | Description |
+|---|---|
+| [spend_analytics_guide.docx](docs/spend_analytics_guide.docx) | Spend Analytics page, Spend Report, filters, API, data model |
+| [contract_database_guide.docx](docs/contract_database_guide.docx) | Contract Database, billing intervals, multi-year detection, Contract Report, API, data model |
+| [spend_management_setup.docx](docs/spend_management_setup.docx) | Initial dev environment setup (session 1) |
 
 ---
 
