@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import Layout from "./components/Layout";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -8,7 +8,9 @@ import SpendPage from "./pages/Spend";
 import ContractsPage from "./pages/Contracts/ContractsPage";
 import BudgetPlanningPage from "./pages/BudgetPlanning/BudgetPlanningPage";
 import ForecastingPage from "./pages/Forecasting/ForecastingPage";
-import ReportsPage from "./pages/Reports/ReportsPage";
+import SpendReportPage from "./pages/Reports/SpendReportPage";
+import ForecastReportPage from "./pages/Reports/ForecastReportPage";
+import BudgetReportPage from "./pages/Reports/BudgetReportPage";
 
 function App() {
   return (
@@ -22,12 +24,15 @@ function App() {
               <ProtectedRoute>
                 <Layout>
                   <Routes>
-                    <Route path="/"                element={<HomePage />} />
-                    <Route path="/spend"           element={<SpendPage />} />
-                    <Route path="/contracts"       element={<ContractsPage />} />
-                    <Route path="/budget-planning" element={<BudgetPlanningPage />} />
-                    <Route path="/forecasting"     element={<ForecastingPage />} />
-                    <Route path="/reports"         element={<ReportsPage />} />
+                    <Route path="/"                      element={<HomePage />} />
+                    <Route path="/spend"                 element={<SpendPage />} />
+                    <Route path="/contracts"             element={<ContractsPage />} />
+                    <Route path="/budget-planning"       element={<BudgetPlanningPage />} />
+                    <Route path="/forecasting"           element={<ForecastingPage />} />
+                    <Route path="/reports"               element={<Navigate to="/reports/spend" replace />} />
+                    <Route path="/reports/spend"         element={<SpendReportPage />} />
+                    <Route path="/reports/forecast"      element={<ForecastReportPage />} />
+                    <Route path="/reports/budget"        element={<BudgetReportPage />} />
                   </Routes>
                 </Layout>
               </ProtectedRoute>
