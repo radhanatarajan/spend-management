@@ -30,9 +30,9 @@ export default function SpendPage() {
   const { data, isLoading, isError, isFetching } = useSpend(queryFilters);
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
+    <div className="p-6">
       <div className="max-w-screen-2xl mx-auto">
-        <h1 className="text-2xl font-semibold text-gray-900 mb-4">Spend</h1>
+        <h1 className="text-2xl font-semibold text-gray-900 mb-4">Spend Analytics</h1>
         {optionsLoading ? (
           <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4 animate-pulse h-40" />
         ) : (

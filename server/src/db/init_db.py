@@ -7,6 +7,7 @@ from sqlalchemy import select, func
 from src.db.base import Base
 from src.db.session import engine, SessionLocal
 from src.models import spend as _spend_module  # noqa: F401 — registers Spend with Base.metadata
+from src.models import user as _user_module    # noqa: F401 — registers User with Base.metadata
 
 
 EXPENSE_TYPES = ["Capex", "Opex", "Travel", "Professional Services", "Marketing"]
@@ -86,6 +87,29 @@ def _last_n_months(n: int) -> list[int]:
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _seed_db()
+    _seed_users()
+
+
+def _seed_users() -> None:
+    from src.models.user import User, UserRole
+    from src.core.security import hash_password
+
+    db = SessionLocal()
+    try:
+        count = db.execute(select(func.count()).select_from(User)).scalar_one()
+        if count > 0:
+            return
+
+        seed_users = [
+            User(email="admin@example.com",         full_name="Admin User",         role=UserRole.ADMIN,         hashed_password=hash_password("admin123"),         is_active=True),
+            User(email="bizadmin@example.com",       full_name="Biz Admin User",     role=UserRole.BIZ_ADMIN,     hashed_password=hash_password("bizadmin123"),     is_active=True),
+            User(email="serviceowner@example.com",   full_name="Service Owner User", role=UserRole.SERVICE_OWNER, hashed_password=hash_password("serviceowner123"), is_active=True),
+            User(email="readonly@example.com",       full_name="Read Only User",     role=UserRole.READ_ONLY,     hashed_password=hash_password("readonly123"),     is_active=True),
+        ]
+        db.add_all(seed_users)
+        db.commit()
+    finally:
+        db.close()
 
 
 def _seed_db() -> None:
