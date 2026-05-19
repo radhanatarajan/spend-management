@@ -23,3 +23,31 @@ export async function fetchSpendFilterOptions(filters = {}) {
   });
   return data;
 }
+
+export async function fetchSpendSummary(filters = {}) {
+  const { month_keys, expense_types, company_codes, oracle_departments,
+          oracle_account_groups, vendors, je_sources } = filters;
+  const { data } = await axios.get(`${BASE}/summary`, {
+    params: { month_keys, expense_types, company_codes, oracle_departments,
+              oracle_account_groups, vendors, je_sources },
+    paramsSerializer: serializer,
+  });
+  return data;
+}
+
+export async function downloadSpendCsv(filters = {}) {
+  const { month_keys, expense_types, company_codes, oracle_departments,
+          oracle_account_groups, vendors, je_sources } = filters;
+  const resp = await axios.get(`${BASE}/export`, {
+    params: { month_keys, expense_types, company_codes, oracle_departments,
+              oracle_account_groups, vendors, je_sources },
+    paramsSerializer: serializer,
+    responseType: "blob",
+  });
+  const url = URL.createObjectURL(resp.data);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `spend_export_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
