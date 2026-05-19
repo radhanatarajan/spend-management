@@ -9,6 +9,7 @@ from src.db.base import Base
 from src.db.session import get_db
 from src.main import app
 from src.models.spend import Spend  # registers Spend with Base.metadata
+from src.models.contract import Contract, ContractLine, ContractStatus, BillingInterval  # noqa: F401
 
 # StaticPool forces all sessions to share a single in-memory connection
 # so tables created in reset_db are visible to the TestClient.
@@ -51,6 +52,37 @@ def client():
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
     app.dependency_overrides.clear()
+
+
+def make_contract(db, vendor="Acme", po="PO-001", lines=None, **kwargs):
+    """Create and persist a Contract with optional lines."""
+    from datetime import date
+    from decimal import Decimal
+    from src.schemas.contract import compute_monthly_amount
+
+    defaults = dict(
+        vendor_name=vendor,
+        oracle_department="1100",
+        oracle_department_name="Engineering",
+        oracle_account_number="ACC-0001",
+        oracle_account_sub_group="Software Licenses",
+        purchase_order_number=po,
+        status=ContractStatus.ACTIVE,
+    )
+    defaults.update(kwargs)
+    contract = Contract(**defaults)
+
+    for ld in (lines or []):
+        line = ContractLine(**ld)
+        line.monthly_amount = compute_monthly_amount(
+            line.entered_amount, line.billing_interval, line.period_start, line.period_end
+        )
+        contract.lines.append(line)
+
+    db.add(contract)
+    db.commit()
+    db.refresh(contract)
+    return contract
 
 
 def make_spend(**kwargs) -> Spend:

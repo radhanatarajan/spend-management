@@ -1,0 +1,570 @@
+"""
+Tests for the Contract Database module.
+
+Covers:
+  - compute_monthly_amount  (unit)
+  - _is_multi_year          (unit)
+  - GET/POST/PUT/DELETE /api/contracts
+  - POST/PUT/DELETE /api/contracts/{id}/lines
+  - GET /api/contracts/report
+"""
+from datetime import date
+from decimal import Decimal
+
+import pytest
+
+from src.models.contract import BillingInterval, ContractStatus
+from src.schemas.contract import compute_monthly_amount, fiscal_year_months, month_to_fy
+from tests.conftest import make_contract
+
+
+# ── Shared line fixtures ───────────────────────────────────────────────────────
+
+LINE_Y1 = dict(
+    po_line_number=1,
+    period_start=date(2026, 1, 1),
+    period_end=date(2026, 12, 31),
+    billing_interval=BillingInterval.MONTHLY,
+    entered_amount=Decimal("1000.00"),
+)
+LINE_Y2 = dict(
+    po_line_number=2,
+    period_start=date(2027, 1, 1),
+    period_end=date(2027, 12, 31),
+    billing_interval=BillingInterval.MONTHLY,
+    entered_amount=Decimal("1100.00"),
+)
+LINE_Y3 = dict(
+    po_line_number=3,
+    period_start=date(2028, 1, 1),
+    period_end=date(2028, 12, 31),
+    billing_interval=BillingInterval.MONTHLY,
+    entered_amount=Decimal("1200.00"),
+)
+# Line with a gap (starts Feb 2027 instead of Jan 2027)
+LINE_GAP = dict(
+    po_line_number=2,
+    period_start=date(2027, 2, 1),
+    period_end=date(2027, 12, 31),
+    billing_interval=BillingInterval.MONTHLY,
+    entered_amount=Decimal("1100.00"),
+)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Unit: compute_monthly_amount
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestComputeMonthlyAmount:
+    def test_monthly_returns_as_is(self):
+        result = compute_monthly_amount(
+            Decimal("500.00"), BillingInterval.MONTHLY,
+            date(2026, 1, 1), date(2026, 12, 31),
+        )
+        assert result == Decimal("500.00")
+
+    def test_quarterly_divides_by_3(self):
+        result = compute_monthly_amount(
+            Decimal("3000.00"), BillingInterval.QUARTERLY,
+            date(2026, 1, 1), date(2026, 3, 31),
+        )
+        assert result == Decimal("1000.00")
+
+    def test_yearly_divides_by_12(self):
+        result = compute_monthly_amount(
+            Decimal("12000.00"), BillingInterval.YEARLY,
+            date(2026, 1, 1), date(2026, 12, 31),
+        )
+        assert result == Decimal("1000.00")
+
+    def test_custom_divides_by_months_in_period(self):
+        # Jan–Mar = 3 months
+        result = compute_monthly_amount(
+            Decimal("3000.00"), BillingInterval.CUSTOM,
+            date(2026, 1, 1), date(2026, 3, 31),
+        )
+        assert result == Decimal("1000.00")
+
+    def test_custom_18_month_period(self):
+        result = compute_monthly_amount(
+            Decimal("18000.00"), BillingInterval.CUSTOM,
+            date(2026, 1, 1), date(2027, 6, 30),
+        )
+        assert result == Decimal("1000.00")
+
+    def test_quarterly_rounds_to_cents(self):
+        # 100 / 3 = 33.333… → 33.33
+        result = compute_monthly_amount(
+            Decimal("100.00"), BillingInterval.QUARTERLY,
+            date(2026, 1, 1), date(2026, 3, 31),
+        )
+        assert result == Decimal("33.33")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Unit: fiscal year helpers
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestFiscalYearHelpers:
+    def test_month_to_fy_is_calendar_year(self):
+        assert month_to_fy(2027, 6) == 2027
+
+    def test_fiscal_year_months_jan_to_dec(self):
+        months = fiscal_year_months(2027)
+        assert months[0] == (2027, 1)
+        assert months[-1] == (2027, 12)
+        assert len(months) == 12
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Unit: _is_multi_year (via report endpoint behaviour)
+# The logic is also exercised indirectly through the report tests below.
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestIsMultiYear:
+    """Test multi-year detection by inspecting what the report endpoint includes."""
+
+    def test_single_line_not_multi_year(self, client, db):
+        make_contract(db, lines=[LINE_Y1])
+        resp = client.get("/api/contracts/report?fiscal_year=2026")
+        assert resp.status_code == 200
+        # single-line contract must not appear in the report
+        assert resp.json()["rows"] == []
+
+    def test_two_consecutive_lines_is_multi_year(self, client, db):
+        make_contract(db, lines=[LINE_Y1, LINE_Y2])
+        resp = client.get("/api/contracts/report?fiscal_year=2026")
+        assert resp.status_code == 200
+        assert len(resp.json()["rows"]) == 1
+
+    def test_gap_between_lines_not_multi_year(self, client, db):
+        make_contract(db, lines=[LINE_Y1, LINE_GAP])
+        resp = client.get("/api/contracts/report?fiscal_year=2026")
+        assert resp.json()["rows"] == []
+
+    def test_three_consecutive_lines_is_multi_year(self, client, db):
+        make_contract(db, lines=[LINE_Y1, LINE_Y2, LINE_Y3])
+        resp = client.get("/api/contracts/report?fiscal_year=2026")
+        assert len(resp.json()["rows"]) == 1
+
+    def test_december_to_january_rollover(self, client, db):
+        # Dec end → Jan start is valid consecutive
+        line_dec = dict(
+            po_line_number=1,
+            period_start=date(2026, 1, 1), period_end=date(2026, 12, 31),
+            billing_interval=BillingInterval.MONTHLY, entered_amount=Decimal("500.00"),
+        )
+        line_jan = dict(
+            po_line_number=2,
+            period_start=date(2027, 1, 1), period_end=date(2027, 12, 31),
+            billing_interval=BillingInterval.MONTHLY, entered_amount=Decimal("550.00"),
+        )
+        make_contract(db, lines=[line_dec, line_jan])
+        resp = client.get("/api/contracts/report?fiscal_year=2026")
+        assert len(resp.json()["rows"]) == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /api/contracts
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestListContracts:
+    def test_empty_returns_empty_list(self, client):
+        resp = client.get("/api/contracts")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_returns_all_contracts(self, client, db):
+        make_contract(db, vendor="Zoom")
+        make_contract(db, vendor="Slack", po="PO-002")
+        resp = client.get("/api/contracts")
+        assert resp.status_code == 200
+        assert len(resp.json()) == 2
+
+    def test_response_includes_lines(self, client, db):
+        make_contract(db, lines=[LINE_Y1])
+        contracts = client.get("/api/contracts").json()
+        assert len(contracts[0]["lines"]) == 1
+
+    def test_ordered_by_vendor_name(self, client, db):
+        make_contract(db, vendor="Zoom", po="PO-Z")
+        make_contract(db, vendor="Acme", po="PO-A")
+        names = [c["vendor_name"] for c in client.get("/api/contracts").json()]
+        assert names == sorted(names)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POST /api/contracts
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestCreateContract:
+    def _payload(self, **overrides):
+        base = dict(
+            vendor_name="GitHub",
+            oracle_department="1100",
+            oracle_department_name="Engineering",
+            oracle_account_number="ACC-6401",
+            oracle_account_sub_group="Software Licenses",
+            purchase_order_number="PO-91200",
+            status="active",
+            lines=[],
+        )
+        base.update(overrides)
+        return base
+
+    def test_create_minimal_contract(self, client):
+        resp = client.post("/api/contracts", json=self._payload())
+        assert resp.status_code == 201
+        body = resp.json()
+        assert body["vendor_name"] == "GitHub"
+        assert body["lines"] == []
+
+    def test_create_with_monthly_line(self, client):
+        lines = [dict(
+            po_line_number=1,
+            period_start="2026-01-01", period_end="2026-12-31",
+            billing_interval="monthly", entered_amount="1000.00",
+        )]
+        resp = client.post("/api/contracts", json=self._payload(lines=lines))
+        assert resp.status_code == 201
+        line = resp.json()["lines"][0]
+        assert float(line["monthly_amount"]) == 1000.00
+        assert float(line["entered_amount"]) == 1000.00
+
+    def test_create_with_quarterly_line_computes_monthly(self, client):
+        lines = [dict(
+            po_line_number=1,
+            period_start="2026-01-01", period_end="2026-03-31",
+            billing_interval="quarterly", entered_amount="3000.00",
+        )]
+        resp = client.post("/api/contracts", json=self._payload(lines=lines))
+        assert resp.status_code == 201
+        line = resp.json()["lines"][0]
+        assert float(line["monthly_amount"]) == 1000.00
+        assert float(line["entered_amount"]) == 3000.00
+
+    def test_create_with_yearly_line_computes_monthly(self, client):
+        lines = [dict(
+            po_line_number=1,
+            period_start="2026-01-01", period_end="2026-12-31",
+            billing_interval="yearly", entered_amount="12000.00",
+        )]
+        resp = client.post("/api/contracts", json=self._payload(lines=lines))
+        line = resp.json()["lines"][0]
+        assert float(line["monthly_amount"]) == 1000.00
+
+    def test_create_with_custom_line_computes_monthly(self, client):
+        # 6-month period, total 6000 → 1000/mo
+        lines = [dict(
+            po_line_number=1,
+            period_start="2026-01-01", period_end="2026-06-30",
+            billing_interval="custom", entered_amount="6000.00",
+        )]
+        resp = client.post("/api/contracts", json=self._payload(lines=lines))
+        line = resp.json()["lines"][0]
+        assert float(line["monthly_amount"]) == 1000.00
+
+    def test_computed_total_amount_on_line(self, client):
+        # monthly 500 × 12 months = 6000
+        lines = [dict(
+            po_line_number=1,
+            period_start="2026-01-01", period_end="2026-12-31",
+            billing_interval="monthly", entered_amount="500.00",
+        )]
+        resp = client.post("/api/contracts", json=self._payload(lines=lines))
+        line = resp.json()["lines"][0]
+        assert float(line["total_amount"]) == 6000.00
+        assert line["months_in_period"] == 12
+
+    def test_contract_total_sums_lines(self, client):
+        lines = [
+            dict(po_line_number=1, period_start="2026-01-01", period_end="2026-12-31",
+                 billing_interval="monthly", entered_amount="1000.00"),
+            dict(po_line_number=2, period_start="2027-01-01", period_end="2027-12-31",
+                 billing_interval="monthly", entered_amount="1100.00"),
+        ]
+        body = client.post("/api/contracts", json=self._payload(lines=lines)).json()
+        # 1000×12 + 1100×12 = 12000 + 13200 = 25200
+        assert float(body["contract_total"]) == 25200.00
+
+    def test_missing_required_field_returns_422(self, client):
+        payload = self._payload()
+        del payload["vendor_name"]
+        resp = client.post("/api/contracts", json=payload)
+        assert resp.status_code == 422
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /api/contracts/{id}
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestGetContract:
+    def test_returns_contract(self, client, db):
+        c = make_contract(db, vendor="Notion")
+        resp = client.get(f"/api/contracts/{c.id}")
+        assert resp.status_code == 200
+        assert resp.json()["vendor_name"] == "Notion"
+
+    def test_404_for_missing_contract(self, client):
+        resp = client.get("/api/contracts/9999")
+        assert resp.status_code == 404
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PUT /api/contracts/{id}
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestUpdateContract:
+    def test_update_vendor_name(self, client, db):
+        c = make_contract(db, vendor="OldName")
+        resp = client.put(f"/api/contracts/{c.id}", json={"vendor_name": "NewName"})
+        assert resp.status_code == 200
+        assert resp.json()["vendor_name"] == "NewName"
+
+    def test_update_status(self, client, db):
+        c = make_contract(db)
+        resp = client.put(f"/api/contracts/{c.id}", json={"status": "expired"})
+        assert resp.json()["status"] == "expired"
+
+    def test_partial_update_preserves_other_fields(self, client, db):
+        c = make_contract(db, vendor="Figma")
+        client.put(f"/api/contracts/{c.id}", json={"status": "pending"})
+        body = client.get(f"/api/contracts/{c.id}").json()
+        assert body["vendor_name"] == "Figma"
+        assert body["status"] == "pending"
+
+    def test_update_nonexistent_returns_404(self, client):
+        resp = client.put("/api/contracts/9999", json={"vendor_name": "X"})
+        assert resp.status_code == 404
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DELETE /api/contracts/{id}
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestDeleteContract:
+    def test_delete_returns_204(self, client, db):
+        c = make_contract(db)
+        resp = client.delete(f"/api/contracts/{c.id}")
+        assert resp.status_code == 204
+
+    def test_deleted_contract_no_longer_exists(self, client, db):
+        c = make_contract(db)
+        client.delete(f"/api/contracts/{c.id}")
+        assert client.get(f"/api/contracts/{c.id}").status_code == 404
+
+    def test_delete_nonexistent_returns_404(self, client):
+        assert client.delete("/api/contracts/9999").status_code == 404
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# POST /api/contracts/{id}/lines
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestAddLine:
+    def _line_payload(self, **overrides):
+        base = dict(
+            po_line_number=1,
+            period_start="2026-01-01",
+            period_end="2026-12-31",
+            billing_interval="monthly",
+            entered_amount="800.00",
+        )
+        base.update(overrides)
+        return base
+
+    def test_add_line_returns_201(self, client, db):
+        c = make_contract(db)
+        resp = client.post(f"/api/contracts/{c.id}/lines", json=self._line_payload())
+        assert resp.status_code == 201
+
+    def test_add_line_computes_monthly_amount(self, client, db):
+        c = make_contract(db)
+        resp = client.post(f"/api/contracts/{c.id}/lines",
+                           json=self._line_payload(billing_interval="yearly", entered_amount="12000.00"))
+        assert float(resp.json()["monthly_amount"]) == 1000.00
+
+    def test_add_line_to_missing_contract_404(self, client):
+        resp = client.post("/api/contracts/9999/lines", json=self._line_payload())
+        assert resp.status_code == 404
+
+    def test_line_appears_in_contract(self, client, db):
+        c = make_contract(db)
+        client.post(f"/api/contracts/{c.id}/lines", json=self._line_payload())
+        body = client.get(f"/api/contracts/{c.id}").json()
+        assert len(body["lines"]) == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PUT /api/contracts/{id}/lines/{line_id}
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestUpdateLine:
+    def test_update_amount_recomputes_monthly(self, client, db):
+        c = make_contract(db, lines=[LINE_Y1])
+        line_id = client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        resp = client.put(f"/api/contracts/{c.id}/lines/{line_id}",
+                          json={"entered_amount": "2000.00", "billing_interval": "monthly"})
+        assert resp.status_code == 200
+        assert float(resp.json()["monthly_amount"]) == 2000.00
+
+    def test_update_interval_recomputes_monthly(self, client, db):
+        # Start monthly at 3000, switch to quarterly → 3000/3 = 1000/mo
+        c = make_contract(db, lines=[{**LINE_Y1, "entered_amount": Decimal("3000.00")}])
+        line_id = client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        resp = client.put(f"/api/contracts/{c.id}/lines/{line_id}",
+                          json={"billing_interval": "quarterly"})
+        assert float(resp.json()["monthly_amount"]) == 1000.00
+
+    def test_update_period_dates(self, client, db):
+        c = make_contract(db, lines=[LINE_Y1])
+        line_id = client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        resp = client.put(f"/api/contracts/{c.id}/lines/{line_id}",
+                          json={"period_end": "2026-06-30"})
+        assert resp.status_code == 200
+        assert resp.json()["period_end"] == "2026-06-30"
+
+    def test_update_wrong_contract_returns_404(self, client, db):
+        c1 = make_contract(db, po="PO-A", lines=[LINE_Y1])
+        c2 = make_contract(db, po="PO-B")
+        line_id = client.get(f"/api/contracts/{c1.id}").json()["lines"][0]["id"]
+        # Try to update c1's line through c2's URL
+        resp = client.put(f"/api/contracts/{c2.id}/lines/{line_id}",
+                          json={"entered_amount": "999.00"})
+        assert resp.status_code == 404
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DELETE /api/contracts/{id}/lines/{line_id}
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestDeleteLine:
+    def test_delete_line_returns_204(self, client, db):
+        c = make_contract(db, lines=[LINE_Y1])
+        line_id = client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        resp = client.delete(f"/api/contracts/{c.id}/lines/{line_id}")
+        assert resp.status_code == 204
+
+    def test_deleted_line_not_in_contract(self, client, db):
+        c = make_contract(db, lines=[LINE_Y1])
+        line_id = client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        client.delete(f"/api/contracts/{c.id}/lines/{line_id}")
+        assert client.get(f"/api/contracts/{c.id}").json()["lines"] == []
+
+    def test_delete_missing_line_returns_404(self, client, db):
+        c = make_contract(db)
+        resp = client.delete(f"/api/contracts/{c.id}/lines/9999")
+        assert resp.status_code == 404
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GET /api/contracts/report
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestContractReport:
+    def test_missing_fiscal_year_returns_422(self, client):
+        resp = client.get("/api/contracts/report")
+        assert resp.status_code == 422
+
+    def test_empty_db_returns_empty_rows(self, client):
+        resp = client.get("/api/contracts/report?fiscal_year=2026")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["rows"] == []
+        assert body["fiscal_year"] == 2026
+        assert len(body["month_keys"]) == 12
+
+    def test_month_keys_span_full_calendar_year(self, client):
+        resp = client.get("/api/contracts/report?fiscal_year=2027")
+        keys = resp.json()["month_keys"]
+        assert keys[0] == "2027-01"
+        assert keys[-1] == "2027-12"
+
+    def test_actual_amounts_for_covered_months(self, client, db):
+        # LINE_Y1 covers all of 2026; both lines make it multi-year
+        make_contract(db, lines=[LINE_Y1, LINE_Y2])
+        body = client.get("/api/contracts/report?fiscal_year=2026").json()
+        row = body["rows"][0]
+        assert float(row["monthly_amounts"]["2026-06"]) == 1000.00
+        assert row["monthly_assumed"]["2026-06"] is False
+
+    def test_renewal_assumption_for_months_beyond_last_line(self, client, db):
+        # LINE_Y1 ends Dec-2026, LINE_Y2 ends Dec-2027.
+        # Report for FY2028 → all 12 months are assumed at LINE_Y2's rate (1100/mo).
+        make_contract(db, lines=[LINE_Y1, LINE_Y2])
+        body = client.get("/api/contracts/report?fiscal_year=2028").json()
+        row = body["rows"][0]
+        assert float(row["monthly_amounts"]["2028-01"]) == 1100.00
+        assert row["monthly_assumed"]["2028-01"] is True
+
+    def test_assumed_total_equals_sum_of_assumed_months(self, client, db):
+        make_contract(db, lines=[LINE_Y1, LINE_Y2])
+        body = client.get("/api/contracts/report?fiscal_year=2028").json()
+        row = body["rows"][0]
+        expected = 1100.00 * 12
+        assert abs(float(row["assumed_total"]) - expected) < 0.01
+
+    def test_months_before_contract_start_are_null(self, client, db):
+        # Contract starts Jan-2026; report for FY2025 → contract not started yet
+        make_contract(db, lines=[LINE_Y1, LINE_Y2])
+        body = client.get("/api/contracts/report?fiscal_year=2025").json()
+        # Contract has no coverage in 2025 → excluded from rows
+        assert body["rows"] == []
+
+    def test_fy_total_is_sum_of_monthly_amounts(self, client, db):
+        make_contract(db, lines=[LINE_Y1, LINE_Y2])
+        body = client.get("/api/contracts/report?fiscal_year=2026").json()
+        row = body["rows"][0]
+        # 12 months × 1000 = 12000
+        assert float(row["fiscal_year_total"]) == 12000.00
+
+    def test_monthly_totals_footer_matches_rows(self, client, db):
+        make_contract(db, lines=[LINE_Y1, LINE_Y2])
+        body = client.get("/api/contracts/report?fiscal_year=2026").json()
+        for key in body["month_keys"]:
+            row_sum = sum(float(r["monthly_amounts"][key]) for r in body["rows"]
+                          if r["monthly_amounts"].get(key) is not None)
+            assert abs(row_sum - float(body["monthly_totals"][key])) < 0.01
+
+    def test_grand_total_sums_all_fy_totals(self, client, db):
+        make_contract(db, vendor="A", po="PO-A", lines=[LINE_Y1, LINE_Y2])
+        make_contract(db, vendor="B", po="PO-B", lines=[LINE_Y1, LINE_Y2])
+        body = client.get("/api/contracts/report?fiscal_year=2026").json()
+        expected = sum(float(r["fiscal_year_total"]) for r in body["rows"])
+        assert abs(float(body["grand_total"]) - expected) < 0.01
+
+    def test_available_fiscal_years_includes_line_years(self, client, db):
+        make_contract(db, lines=[LINE_Y1, LINE_Y2])
+        body = client.get("/api/contracts/report?fiscal_year=2026").json()
+        assert 2026 in body["available_fiscal_years"]
+        assert 2027 in body["available_fiscal_years"]
+
+    def test_filter_options_populated(self, client, db):
+        make_contract(db, vendor="Zoom", po="PO-Z", lines=[LINE_Y1, LINE_Y2])
+        body = client.get("/api/contracts/report?fiscal_year=2026").json()
+        opts = body["filter_options"]
+        assert "Zoom" in opts["vendors"]
+        assert "active" in opts["statuses"]
+
+    def test_partial_year_coverage_mixed_null_and_amounts(self, client, db):
+        # LINE_Y1 starts Jan-2026; report for FY2026 covers full year → no nulls
+        # but a contract starting mid-year should have nulls for earlier months
+        line_mid = dict(
+            po_line_number=1,
+            period_start=date(2026, 7, 1), period_end=date(2026, 12, 31),
+            billing_interval=BillingInterval.MONTHLY, entered_amount=Decimal("500.00"),
+        )
+        line_next = dict(
+            po_line_number=2,
+            period_start=date(2027, 1, 1), period_end=date(2027, 12, 31),
+            billing_interval=BillingInterval.MONTHLY, entered_amount=Decimal("550.00"),
+        )
+        make_contract(db, lines=[line_mid, line_next])
+        body = client.get("/api/contracts/report?fiscal_year=2026").json()
+        row = body["rows"][0]
+        # Jan–Jun 2026: before contract start → null
+        assert row["monthly_amounts"]["2026-01"] is None
+        assert row["monthly_assumed"]["2026-01"] is False
+        # Jul–Dec 2026: covered
+        assert float(row["monthly_amounts"]["2026-07"]) == 500.00
+        assert row["monthly_assumed"]["2026-07"] is False
