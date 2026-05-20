@@ -138,7 +138,7 @@ Full feature documentation is in the [`docs/`](docs/) folder:
 |---|---|
 | [spend_analytics_guide.md](docs/spend_analytics_guide.md) | Spend Analytics page, Spend Report, filters, API, data model |
 | [contract_database_guide.md](docs/contract_database_guide.md) | Contract Database, billing intervals, multi-year detection, Contract Report business rules, API, data model |
-| [spend_management_setup.docx](docs/spend_management_setup.docx) | Initial dev environment setup (session 1) |
+| [spend_management_setup.md](docs/spend_management_setup.md) | Initial dev environment setup (session 1) |
 
 ---
 
