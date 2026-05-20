@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select
 
 from src.core.dependencies import get_db
-from src.models.contract import Contract, ContractLine, BillingInterval
+from src.models.contract import Contract, ContractLine, BillingInterval, ContractStatus
 from src.schemas.contract import (
     ContractCreate, ContractUpdate, ContractOut,
     ContractLineCreate, ContractLineUpdate, ContractLineOut,
@@ -35,22 +35,30 @@ def _resolve_monthly(line: ContractLine) -> None:
     )
 
 
-def _is_multi_year(contract: Contract) -> bool:
-    """
-    True when all PO lines share the same vendor/dept/account/PO (enforced by the
-    Contract header) AND form a consecutive chain: each line starts the month
-    immediately after the previous line ends.
-    """
-    lines = sorted(contract.lines, key=lambda l: l.period_start)
-    if len(lines) < 2:
+def _group_key(contract: Contract) -> tuple:
+    return (
+        contract.vendor_name,
+        contract.oracle_department,
+        contract.oracle_account_number,
+        contract.purchase_order_number,
+    )
+
+
+def _is_multi_year_lines(lines: list[ContractLine]) -> bool:
+    """True when the lines form a consecutive chain (each line starts the month after the previous ends)."""
+    sorted_lines = sorted(lines, key=lambda l: l.period_start)
+    if len(sorted_lines) < 2:
         return False
-    for a, b in zip(lines, lines[1:]):
-        # Advance end-month by one
+    for a, b in zip(sorted_lines, sorted_lines[1:]):
         next_year  = a.period_end.year + (1 if a.period_end.month == 12 else 0)
         next_month = 1 if a.period_end.month == 12 else a.period_end.month + 1
         if b.period_start.year != next_year or b.period_start.month != next_month:
             return False
     return True
+
+
+def _is_multi_year(contract: Contract) -> bool:
+    return _is_multi_year_lines(list(contract.lines))
 
 
 # ── Contract Report ───────────────────────────────────────────────────────────
@@ -64,18 +72,38 @@ def get_contract_report(
         select(Contract).options(selectinload(Contract.lines)).order_by(Contract.vendor_name)
     ).scalars().all()
 
-    # Multi-year = consecutive PO lines (same vendor/dept/account/PO enforced by header)
-    multi_year = [c for c in all_contracts if _is_multi_year(c)]
+    # Group contracts by (vendor, dept, account, PO) — same logic as ContractsPage
+    groups: dict[tuple, list[Contract]] = {}
+    for c in all_contracts:
+        groups.setdefault(_group_key(c), []).append(c)
+
+    # Build report groups — all groups, not just multi-year
+    report_groups = []
+    for key, contracts in groups.items():
+        merged_lines = [line for c in contracts for line in c.lines]
+        if not merged_lines:
+            continue
+        sorted_merged = sorted(merged_lines, key=lambda l: l.period_start)
+        # Status from the contract that owns the last line
+        last_contract_id = sorted_merged[-1].contract_id
+        last_contract = next((c for c in contracts if c.id == last_contract_id), contracts[0])
+        report_groups.append({
+            "representative": contracts[0],
+            "lines": sorted_merged,
+            "status": last_contract.status,
+            "is_multi_year": _is_multi_year_lines(merged_lines),
+        })
+    report_groups.sort(key=lambda g: g["representative"].vendor_name)
 
     # Build fiscal-year month list
     fy_months = fiscal_year_months(fiscal_year)  # [(year, month), ...]
     mk_str = [f"{y:04d}-{m:02d}" for y, m in fy_months]
     mk_labels = [month_label(y, m) for y, m in fy_months]
 
-    # Available fiscal years across all multi-year contract lines
+    # Available fiscal years across all group lines
     fy_set: set[int] = set()
-    for c in multi_year:
-        for line in c.lines:
+    for g in report_groups:
+        for line in g["lines"]:
             s_fy = month_to_fy(line.period_start.year, line.period_start.month)
             e_fy = month_to_fy(line.period_end.year, line.period_end.month)
             for fy in range(s_fy, e_fy + 1):
@@ -84,9 +112,10 @@ def get_contract_report(
 
     # Build report rows
     rows: list[ContractReportRow] = []
-    for contract in multi_year:
-        # Sort lines chronologically so "last line" is well-defined
-        sorted_lines = sorted(contract.lines, key=lambda l: l.period_start)
+    for g in report_groups:
+        contract = g["representative"]
+        sorted_lines = g["lines"]
+        group_status = g["status"]
         last_line = sorted_lines[-1]
         last_line_end_int = last_line.period_end.year * 100 + last_line.period_end.month
         first_line_start_int = sorted_lines[0].period_start.year * 100 + sorted_lines[0].period_start.month
@@ -117,8 +146,13 @@ def get_contract_report(
                 monthly_assumed[key] = False
             elif mk_int > last_line_end_int:
                 # Beyond last signed PO line → 100% renewal assumption at last line's rate
-                monthly_amounts[key] = last_line.monthly_amount
-                monthly_assumed[key] = True
+                # Only for active/pending contracts; expired/cancelled don't renew
+                if group_status in (ContractStatus.ACTIVE, ContractStatus.PENDING):
+                    monthly_amounts[key] = last_line.monthly_amount
+                    monthly_assumed[key] = True
+                else:
+                    monthly_amounts[key] = None
+                    monthly_assumed[key] = False
             else:
                 # Gap between lines (shouldn't happen in clean data, but handle gracefully)
                 monthly_amounts[key] = None
@@ -141,8 +175,9 @@ def get_contract_report(
             oracle_account_number=contract.oracle_account_number,
             oracle_account_sub_group=contract.oracle_account_sub_group,
             purchase_order_number=contract.purchase_order_number,
-            status=contract.status,
-            num_lines=len(contract.lines),
+            status=group_status,
+            num_lines=len(sorted_lines),
+            is_multi_year=g["is_multi_year"],
             monthly_amounts=monthly_amounts,
             monthly_assumed=monthly_assumed,
             fiscal_year_total=Decimal(str(fy_total)),

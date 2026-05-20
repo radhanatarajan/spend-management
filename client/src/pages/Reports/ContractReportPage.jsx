@@ -69,7 +69,7 @@ function MonthlyTable({ report, rows }) {
   if (!rows.length) {
     return (
       <div className="bg-white border border-gray-200 rounded-xl p-8 text-center text-sm text-gray-400">
-        No multi-year contracts with coverage in this fiscal year.
+        No contracts with coverage in this fiscal year.
       </div>
     );
   }
@@ -117,8 +117,13 @@ function MonthlyTable({ report, rows }) {
             {rows.map((row) => (
               <tr key={row.id} className="hover:bg-gray-50 group">
                 <td className="sticky left-0 z-10 bg-white group-hover:bg-gray-50 px-4 py-2.5">
-                  <div className="font-medium text-gray-900 leading-tight">{row.vendor_name}</div>
-                  <div className="text-gray-400 text-[10px] mt-0.5">{row.purchase_order_number} · {row.num_lines}yr</div>
+                  <div className="flex items-center gap-1.5 leading-tight">
+                    <span className="font-medium text-gray-900">{row.vendor_name}</span>
+                    {row.is_multi_year && (
+                      <span className="text-[9px] font-semibold uppercase tracking-wide px-1 py-0.5 rounded bg-indigo-50 text-indigo-600">Multi-yr</span>
+                    )}
+                  </div>
+                  <div className="text-gray-400 text-[10px] mt-0.5">{row.purchase_order_number} · {row.num_lines} line{row.num_lines !== 1 ? "s" : ""}</div>
                   <span className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium capitalize ${STATUS_CHIP[row.status] ?? "bg-gray-100 text-gray-500"}`}>
                     {row.status}
                   </span>
@@ -209,7 +214,7 @@ export default function ContractReportPage() {
         <div>
           <h1 className="text-base font-semibold text-gray-900">Contract Report</h1>
           <p className="text-xs text-gray-400 mt-0.5">
-            Multi-year contracts · {report?.period_label ?? "…"} · monthly breakout
+            All contracts · {report?.period_label ?? "…"} · monthly breakout
           </p>
         </div>
 
@@ -249,7 +254,7 @@ export default function ContractReportPage() {
 
       {/* KPI cards */}
       <div className="grid grid-cols-4 gap-3">
-        <KpiCard label="Contracts"        value={numContracts} sub="multi-year (2+ PO lines)" />
+        <KpiCard label="Contracts"        value={numContracts} sub={`${filteredRows.filter(r => r.is_multi_year).length} multi-year`} />
         <KpiCard label="Vendors"          value={numVendors} />
         <KpiCard label="FY Total Value"   value={fmtK(grandTotal)} sub={fmtUSD(grandTotal)} />
         <KpiCard label="Assumed (renewal)" value={fmtK(assumedTotal)} sub={assumedTotal > 0 ? "~100% renewal rate" : "all lines signed"} />
