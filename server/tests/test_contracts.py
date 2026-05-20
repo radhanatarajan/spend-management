@@ -124,23 +124,28 @@ class TestFiscalYearHelpers:
 class TestIsMultiYear:
     """Test multi-year detection by inspecting what the report endpoint includes."""
 
-    def test_single_line_not_multi_year(self, client, db):
+    def test_single_line_appears_but_not_flagged_multi_year(self, client, db):
         make_contract(db, lines=[LINE_Y1])
         resp = client.get("/api/contracts/report?fiscal_year=2026")
         assert resp.status_code == 200
-        # single-line contract must not appear in the report
-        assert resp.json()["rows"] == []
+        rows = resp.json()["rows"]
+        assert len(rows) == 1
+        assert rows[0]["is_multi_year"] is False
 
-    def test_two_consecutive_lines_is_multi_year(self, client, db):
+    def test_two_consecutive_lines_flagged_multi_year(self, client, db):
         make_contract(db, lines=[LINE_Y1, LINE_Y2])
         resp = client.get("/api/contracts/report?fiscal_year=2026")
         assert resp.status_code == 200
-        assert len(resp.json()["rows"]) == 1
+        rows = resp.json()["rows"]
+        assert len(rows) == 1
+        assert rows[0]["is_multi_year"] is True
 
-    def test_gap_between_lines_not_multi_year(self, client, db):
+    def test_gap_between_lines_not_flagged_multi_year(self, client, db):
         make_contract(db, lines=[LINE_Y1, LINE_GAP])
         resp = client.get("/api/contracts/report?fiscal_year=2026")
-        assert resp.json()["rows"] == []
+        rows = resp.json()["rows"]
+        assert len(rows) == 1
+        assert rows[0]["is_multi_year"] is False
 
     def test_three_consecutive_lines_is_multi_year(self, client, db):
         make_contract(db, lines=[LINE_Y1, LINE_Y2, LINE_Y3])
@@ -504,11 +509,10 @@ class TestContractReport:
         expected = 1100.00 * 12
         assert abs(float(row["assumed_total"]) - expected) < 0.01
 
-    def test_months_before_contract_start_are_null(self, client, db):
-        # Contract starts Jan-2026; report for FY2025 → contract not started yet
+    def test_months_before_contract_start_are_excluded(self, client, db):
+        # Contract starts Jan-2026; report for FY2025 → no coverage, no assumption → excluded
         make_contract(db, lines=[LINE_Y1, LINE_Y2])
         body = client.get("/api/contracts/report?fiscal_year=2025").json()
-        # Contract has no coverage in 2025 → excluded from rows
         assert body["rows"] == []
 
     def test_fy_total_is_sum_of_monthly_amounts(self, client, db):
@@ -545,6 +549,31 @@ class TestContractReport:
         opts = body["filter_options"]
         assert "Zoom" in opts["vendors"]
         assert "active" in opts["statuses"]
+
+    def test_cross_contract_grouping_detected_as_multi_year(self, client, db):
+        # Two separate Contract DB records, same vendor+dept+account+PO, consecutive lines.
+        # Each record has only 1 line — multi-year only detectable via grouping.
+        line1 = dict(
+            po_line_number=1,
+            period_start=date(2026, 5, 1), period_end=date(2027, 4, 30),
+            billing_interval=BillingInterval.MONTHLY, entered_amount=Decimal("10000.00"),
+        )
+        line2 = dict(
+            po_line_number=2,
+            period_start=date(2027, 5, 1), period_end=date(2028, 4, 30),
+            billing_interval=BillingInterval.MONTHLY, entered_amount=Decimal("11000.00"),
+        )
+        make_contract(db, vendor="Zoom", po="PO-ZM", lines=[line1])
+        make_contract(db, vendor="Zoom", po="PO-ZM", lines=[line2])
+        body = client.get("/api/contracts/report?fiscal_year=2027").json()
+        assert len(body["rows"]) == 1
+        row = body["rows"][0]
+        assert row["vendor_name"] == "Zoom"
+        assert row["num_lines"] == 2
+        # Jan-Apr 2027 covered by line1 at 10000; May-Dec 2027 covered by line2 at 11000
+        assert float(row["monthly_amounts"]["2027-01"]) == 10000.00
+        assert float(row["monthly_amounts"]["2027-06"]) == 11000.00
+        assert row["monthly_assumed"]["2027-06"] is False
 
     def test_partial_year_coverage_mixed_null_and_amounts(self, client, db):
         # LINE_Y1 starts Jan-2026; report for FY2026 covers full year → no nulls

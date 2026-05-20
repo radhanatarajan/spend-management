@@ -143,6 +143,7 @@ class ContractReportRow(BaseModel):
     purchase_order_number: str
     status: ContractStatus
     num_lines: int
+    is_multi_year: bool
     # month_key → monthly_amount (None = contract not yet started or no coverage)
     monthly_amounts: dict[str, Decimal | None]
     # month_key → True when the amount is a 100% renewal assumption (not a signed PO line)
