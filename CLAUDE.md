@@ -50,6 +50,26 @@ Before implementing:
 - PRs target: `main` — never commit directly to `main`
 - Always work on `develop` unless creating a PR
 
+### Pre-Push Checklist
+
+Run these before every `git push`. Do not push if any step fails.
+
+```bash
+# 1. Backend tests — all must pass
+cd server && uv run pytest -q
+
+# 2. Frontend lint — zero errors required
+cd client && npm run lint
+
+# 3. Frontend build — must compile clean
+cd client && npm run build
+```
+
+If a test fails: fix the root cause, do not skip or suppress.
+If lint fails: fix the code, do not add `// eslint-disable` unless genuinely necessary and approved by the user.
+
+GitHub Actions runs the same checks automatically on every push to `develop` and every PR to `main` (see `.github/workflows/ci.yml`). A red CI badge = do not merge.
+
 ---
 
 ## Dev Stack
