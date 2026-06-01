@@ -11,6 +11,7 @@ import ForecastingPage from "./pages/Forecasting/ForecastingPage";
 import SpendReportPage from "./pages/Reports/SpendReportPage";
 import ForecastReportPage from "./pages/Reports/ForecastReportPage";
 import BudgetReportPage from "./pages/Reports/BudgetReportPage";
+import BudgetAuditReportPage from "./pages/Reports/BudgetAuditReportPage";
 import ContractReportPage from "./pages/Reports/ContractReportPage";
 
 function App() {
@@ -35,6 +36,7 @@ function App() {
                     <Route path="/reports/contracts"     element={<ContractReportPage />} />
                     <Route path="/reports/forecast"      element={<ForecastReportPage />} />
                     <Route path="/reports/budget"        element={<BudgetReportPage />} />
+                    <Route path="/reports/budget-audit"  element={<BudgetAuditReportPage />} />
                   </Routes>
                 </Layout>
               </ProtectedRoute>

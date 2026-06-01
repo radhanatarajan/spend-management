@@ -9,6 +9,7 @@ from src.db.session import engine, SessionLocal
 from src.models import spend as _spend_module     # noqa: F401 — registers Spend with Base.metadata
 from src.models import user as _user_module       # noqa: F401 — registers User with Base.metadata
 from src.models import contract as _contract_module  # noqa: F401 — registers Contract/ContractLine with Base.metadata
+from src.models import budget as _budget_module   # noqa: F401 — registers BudgetScenario/BudgetEntry/BudgetNcConfig with Base.metadata
 
 
 EXPENSE_TYPES = ["Capex", "Opex", "Travel", "Professional Services", "Marketing"]
@@ -88,9 +89,124 @@ def _last_n_months(n: int) -> list[int]:
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
     _migrate_contract_lines()
+    _migrate_budget_nc_config()
+    _migrate_budget_scenario_status()
+    _migrate_budget_audit_view()
     _seed_db()
     _seed_users()
     _seed_contracts()
+    _seed_budget()
+
+
+def _migrate_budget_scenario_status() -> None:
+    """Add status to budget_entries and event_type/changes to budget_entry_audit if missing.
+    Also drops legacy wide-column audit fields if they still exist."""
+    with engine.connect() as conn:
+        for table, col, ddl in [
+            ("budget_entries",    "status",     "ENUM('DRAFT','READY_FOR_REVIEW','APPROVED','FINAL','CANCELLED') NOT NULL DEFAULT 'DRAFT'"),
+            ("budget_entry_audit","event_type", "VARCHAR(50) NOT NULL DEFAULT 'AMOUNT_CHANGED'"),
+            ("budget_entry_audit","changes",    "JSON NOT NULL DEFAULT ('{}')"),
+        ]:
+            table_exists = conn.execute(text(
+                "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t"
+            ), {"t": table}).scalar()
+            if not table_exists:
+                continue
+            existing = {
+                row[0] for row in conn.execute(text(
+                    "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                    "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t"
+                ), {"t": table})
+            }
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}"))
+
+        # Drop legacy wide-column fields from original audit design
+        legacy_cols = ["old_q1", "old_q2", "old_q3", "old_q4",
+                       "new_q1", "new_q2", "new_q3", "new_q4",
+                       "old_status", "new_status"]
+        audit_cols = {
+            row[0] for row in conn.execute(text(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'budget_entry_audit'"
+            ))
+        }
+        for col in legacy_cols:
+            if col in audit_cols:
+                conn.execute(text(f"ALTER TABLE budget_entry_audit DROP COLUMN {col}"))
+
+        conn.commit()
+
+
+def _migrate_budget_nc_config() -> None:
+    """Add actuals_cutoff_month_key column to budget_nc_config if missing (idempotent, MySQL-compatible)."""
+    with engine.connect() as conn:
+        table_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'budget_nc_config'"
+        )).scalar()
+        if not table_exists:
+            return
+
+        existing = {
+            row[0] for row in conn.execute(text(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'budget_nc_config'"
+            ))
+        }
+
+        if "actuals_cutoff_month_key" not in existing:
+            conn.execute(text(
+                "ALTER TABLE budget_nc_config ADD COLUMN actuals_cutoff_month_key INT NULL"
+            ))
+            conn.commit()
+
+
+def _migrate_budget_audit_view() -> None:
+    """Create or replace v_budget_entry_audit — joins budget_entries + budget_scenarios
+    + budget_entry_audit and unpacks the changes JSON into named old/new columns."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW v_budget_entry_audit AS
+            SELECT
+                bea.id                                                                    AS audit_id,
+                be.id                                                                     AS entry_id,
+                bs.id                                                                     AS scenario_id,
+                bs.name                                                                   AS scenario_name,
+                bs.fiscal_year,
+                be.department_name,
+                be.entry_type,
+                bea.event_type,
+                bea.changed_by,
+                bea.changed_at,
+
+                -- Amount changes (NULL when that field was not part of this event)
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(bea.changes, '$.q1_amount.old')) AS DECIMAL(14,2)) AS q1_old,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(bea.changes, '$.q1_amount.new')) AS DECIMAL(14,2)) AS q1_new,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(bea.changes, '$.q2_amount.old')) AS DECIMAL(14,2)) AS q2_old,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(bea.changes, '$.q2_amount.new')) AS DECIMAL(14,2)) AS q2_new,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(bea.changes, '$.q3_amount.old')) AS DECIMAL(14,2)) AS q3_old,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(bea.changes, '$.q3_amount.new')) AS DECIMAL(14,2)) AS q3_new,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(bea.changes, '$.q4_amount.old')) AS DECIMAL(14,2)) AS q4_old,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(bea.changes, '$.q4_amount.new')) AS DECIMAL(14,2)) AS q4_new,
+
+                -- Status change (NULL when this event did not touch status)
+                JSON_UNQUOTE(JSON_EXTRACT(bea.changes, '$.status.old'))                  AS status_old,
+                JSON_UNQUOTE(JSON_EXTRACT(bea.changes, '$.status.new'))                  AS status_new,
+
+                -- Current live state of the entry for reference
+                be.q1_amount                                                              AS current_q1,
+                be.q2_amount                                                              AS current_q2,
+                be.q3_amount                                                              AS current_q3,
+                be.q4_amount                                                              AS current_q4,
+                be.status                                                                 AS current_status
+            FROM budget_entry_audit bea
+            JOIN budget_entries be   ON be.id  = bea.entry_id
+            JOIN budget_scenarios bs ON bs.id  = be.scenario_id
+            ORDER BY bea.changed_at DESC
+        """))
+        conn.commit()
 
 
 def _migrate_contract_lines() -> None:
@@ -284,6 +400,81 @@ def _seed_contracts() -> None:
                 )
                 contract.lines.append(line)
             db.add(contract)
+
+        db.commit()
+    finally:
+        db.close()
+
+
+def _seed_budget() -> None:
+    from src.models.budget import BudgetScenario, BudgetEntry, BudgetNcConfig
+
+    db = SessionLocal()
+    try:
+        count = db.execute(select(func.count()).select_from(BudgetScenario)).scalar_one()
+        if count > 0:
+            return
+
+        fiscal_year = 2027
+
+        cfg = BudgetNcConfig(
+            fiscal_year=fiscal_year,
+            selected_cost_elements=["Salaries", "Travel"],
+            updated_by="admin@example.com",
+        )
+        db.add(cfg)
+
+        baseline = BudgetScenario(
+            name="Baseline FY2027",
+            description="Default baseline budget plan for FY2027",
+            fiscal_year=fiscal_year,
+            budget_type="NON_CONTROLLABLE",
+            is_baseline=True,
+            created_by="admin@example.com",
+        )
+        db.add(baseline)
+
+        db.flush()
+
+        dept_approved_recs = {
+            "Engineering":   (Decimal("185000"), Decimal("185000"), Decimal("190000"), Decimal("195000")),
+            "Sales":         (Decimal("120000"), Decimal("125000"), Decimal("125000"), Decimal("130000")),
+            "Finance":       (Decimal("75000"),  Decimal("75000"),  Decimal("78000"),  Decimal("78000")),
+            "Marketing":     (Decimal("90000"),  Decimal("95000"),  Decimal("95000"),  Decimal("100000")),
+            "Operations":    (Decimal("60000"),  Decimal("60000"),  Decimal("62000"),  Decimal("62000")),
+            "HR":            (Decimal("45000"),  Decimal("45000"),  Decimal("47000"),  Decimal("47000")),
+            "Legal":         (Decimal("38000"),  Decimal("38000"),  Decimal("40000"),  Decimal("40000")),
+            "IT":            (Decimal("55000"),  Decimal("55000"),  Decimal("57000"),  Decimal("57000")),
+        }
+        dept_additional_asks = {
+            "Engineering":   (Decimal("15000"), Decimal("15000"), Decimal("20000"), Decimal("20000")),
+            "Sales":         (Decimal("10000"), Decimal("10000"), Decimal("12000"), Decimal("12000")),
+            "Finance":       (Decimal("5000"),  Decimal("5000"),  Decimal("5000"),  Decimal("5000")),
+            "Marketing":     (Decimal("8000"),  Decimal("8000"),  Decimal("10000"), Decimal("10000")),
+            "Operations":    (None,             None,             None,             None),
+            "HR":            (Decimal("3000"),  Decimal("3000"),  Decimal("3000"),  Decimal("3000")),
+            "Legal":         (None,             None,             None,             None),
+            "IT":            (Decimal("4000"),  Decimal("4000"),  Decimal("5000"),  Decimal("5000")),
+        }
+
+        for dept, (q1, q2, q3, q4) in dept_approved_recs.items():
+            db.add(BudgetEntry(
+                scenario_id=baseline.id,
+                department_name=dept,
+                entry_type="APPROVED_REC",
+                q1_amount=q1, q2_amount=q2, q3_amount=q3, q4_amount=q4,
+                created_by="admin@example.com",
+            ))
+
+        for dept, (q1, q2, q3, q4) in dept_additional_asks.items():
+            if any(x is not None for x in (q1, q2, q3, q4)):
+                db.add(BudgetEntry(
+                    scenario_id=baseline.id,
+                    department_name=dept,
+                    entry_type="ADDITIONAL_ASK",
+                    q1_amount=q1, q2_amount=q2, q3_amount=q3, q4_amount=q4,
+                    created_by="admin@example.com",
+                ))
 
         db.commit()
     finally:

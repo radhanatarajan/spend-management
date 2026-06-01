@@ -1,0 +1,151 @@
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  fetchCostElements, fetchNcConfig, updateNcConfig,
+  fetchScenarios, createScenario, updateScenario, deleteScenario,
+  fetchNonControllablePlan, upsertEntry, deleteEntry,
+  fetchScenarioComparison, updateEntryStatus, fetchScenarioAudit,
+  fetchBudgetAuditReport,
+} from "./api";
+
+const KEYS = {
+  costElements: ["budget", "costElements"],
+  ncConfig: (fy) => ["budget", "ncConfig", fy],
+  scenarios: (fy, type) => ["budget", "scenarios", fy, type],
+  ncPlan: (fy, scenarioId) => ["budget", "ncPlan", fy, scenarioId],
+};
+
+export function useCostElements() {
+  return useQuery({
+    queryKey: KEYS.costElements,
+    queryFn: fetchCostElements,
+    staleTime: 300_000,
+  });
+}
+
+export function useNcConfig(fiscalYear) {
+  return useQuery({
+    queryKey: KEYS.ncConfig(fiscalYear),
+    queryFn: () => fetchNcConfig(fiscalYear),
+    enabled: fiscalYear != null,
+    staleTime: 60_000,
+  });
+}
+
+export function useUpdateNcConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: updateNcConfig,
+    onSuccess: (data) => {
+      qc.setQueryData(KEYS.ncConfig(data.fiscal_year), data);
+      qc.invalidateQueries({ queryKey: ["budget", "ncPlan"] });
+    },
+  });
+}
+
+export function useScenarios(fiscalYear, budgetType) {
+  return useQuery({
+    queryKey: KEYS.scenarios(fiscalYear, budgetType),
+    queryFn: () => fetchScenarios(fiscalYear, budgetType),
+    enabled: fiscalYear != null && budgetType != null,
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateScenario() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: createScenario,
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: KEYS.scenarios(data.fiscal_year, data.budget_type) });
+    },
+  });
+}
+
+export function useUpdateScenario() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...payload }) => updateScenario(id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["budget", "scenarios"] });
+      qc.invalidateQueries({ queryKey: ["budget", "ncPlan"] });
+    },
+  });
+}
+
+export function useDeleteScenario() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: deleteScenario,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["budget", "scenarios"] });
+    },
+  });
+}
+
+export function useNonControllablePlan(fiscalYear, scenarioId) {
+  return useQuery({
+    queryKey: KEYS.ncPlan(fiscalYear, scenarioId),
+    queryFn: () => fetchNonControllablePlan(fiscalYear, scenarioId),
+    enabled: fiscalYear != null && scenarioId != null,
+    staleTime: 30_000,
+  });
+}
+
+export function useUpsertEntry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: upsertEntry,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["budget", "ncPlan"] });
+      qc.invalidateQueries({ queryKey: ["budget", "audit"] });
+    },
+  });
+}
+
+export function useDeleteEntry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: deleteEntry,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["budget", "ncPlan"] });
+    },
+  });
+}
+
+export function useUpdateEntryStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status }) => updateEntryStatus(id, status),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["budget", "ncPlan"] });
+      qc.invalidateQueries({ queryKey: ["budget", "audit"] });
+    },
+  });
+}
+
+export function useScenarioAudit(scenarioId) {
+  return useQuery({
+    queryKey: ["budget", "audit", scenarioId],
+    queryFn: () => fetchScenarioAudit(scenarioId),
+    enabled: scenarioId != null,
+    staleTime: 10_000,
+  });
+}
+
+export function useBudgetAuditReport(fiscalYear) {
+  return useQuery({
+    queryKey: ["budget", "auditReport", fiscalYear],
+    queryFn: () => fetchBudgetAuditReport(fiscalYear),
+    enabled: fiscalYear != null,
+    staleTime: 30_000,
+  });
+}
+
+export function useScenarioComparison(fiscalYear, scenarioAId, scenarioBId) {
+  return useQuery({
+    queryKey: ["budget", "compare", fiscalYear, scenarioAId, scenarioBId],
+    queryFn: () => fetchScenarioComparison(fiscalYear, scenarioAId, scenarioBId),
+    enabled: fiscalYear != null && scenarioAId != null && scenarioBId != null && scenarioAId !== scenarioBId,
+    staleTime: 30_000,
+  });
+}
