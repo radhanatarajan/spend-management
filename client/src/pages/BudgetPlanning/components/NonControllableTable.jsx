@@ -311,21 +311,38 @@ export default function NonControllableTable({ plan, scenarioId }) {
         </div>
       )}
 
+      {/* Expand / Collapse toolbar */}
+      <div className="px-4 py-2 border-b border-gray-100 flex items-center gap-2">
+        <span className="text-[11px] text-gray-400 mr-1">Departments:</span>
+        <button
+          onClick={expandAll}
+          disabled={collapsed.size === 0}
+          className="flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+          Expand All
+        </button>
+        <button
+          onClick={collapseAll}
+          disabled={allCollapsed}
+          className="flex items-center gap-1 text-[11px] px-2 py-1 rounded border border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          <svg className="w-3 h-3 rotate-180" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+          Collapse All
+        </button>
+      </div>
+
       <div className="overflow-x-auto">
         <table className="w-full text-xs border-collapse">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
               <th className="w-8 px-2 py-3 bg-gray-50" /> {/* checkbox */}
               <th className="sticky left-0 z-10 bg-gray-50 px-4 py-3 text-left font-medium text-gray-500 uppercase tracking-wide min-w-[200px]">
-                <div className="flex items-center gap-2">
-                  Department / Category
-                  <button
-                    onClick={allCollapsed ? expandAll : collapseAll}
-                    className="text-[10px] font-normal normal-case text-gray-400 hover:text-indigo-600 border border-gray-200 hover:border-indigo-300 rounded px-1.5 py-0.5 transition-colors"
-                  >
-                    {allCollapsed ? "Expand All" : "Collapse All"}
-                  </button>
-                </div>
+                Department / Category
               </th>
               {QUARTERS.map((q) => (
                 <th key={q} className="px-3 py-3 text-right font-medium text-gray-500 uppercase tracking-wide min-w-[150px]">
