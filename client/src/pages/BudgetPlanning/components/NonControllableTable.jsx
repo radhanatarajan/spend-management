@@ -200,6 +200,26 @@ export default function NonControllableTable({ plan, scenarioId }) {
   const updateStatus = useUpdateEntryStatus();
 
   const [selected, setSelected] = useState(new Set());
+  const [collapsed, setCollapsed] = useState(new Set());
+
+  function toggleDept(name) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+  }
+
+  function collapseAll() {
+    setCollapsed(new Set((plan?.departments ?? []).map((d) => d.department_name)));
+  }
+
+  function expandAll() {
+    setCollapsed(new Set());
+  }
+
+  const allCollapsed = (plan?.departments ?? []).length > 0 &&
+    collapsed.size === (plan?.departments ?? []).length;
 
   // Map entryId → current status (for bulk transition logic)
   const entryStatusMap = useMemo(() => {
@@ -297,7 +317,15 @@ export default function NonControllableTable({ plan, scenarioId }) {
             <tr className="bg-gray-50 border-b border-gray-200">
               <th className="w-8 px-2 py-3 bg-gray-50" /> {/* checkbox */}
               <th className="sticky left-0 z-10 bg-gray-50 px-4 py-3 text-left font-medium text-gray-500 uppercase tracking-wide min-w-[200px]">
-                Department / Category
+                <div className="flex items-center gap-2">
+                  Department / Category
+                  <button
+                    onClick={allCollapsed ? expandAll : collapseAll}
+                    className="text-[10px] font-normal normal-case text-gray-400 hover:text-indigo-600 border border-gray-200 hover:border-indigo-300 rounded px-1.5 py-0.5 transition-colors"
+                  >
+                    {allCollapsed ? "Expand All" : "Collapse All"}
+                  </button>
+                </div>
               </th>
               {QUARTERS.map((q) => (
                 <th key={q} className="px-3 py-3 text-right font-medium text-gray-500 uppercase tracking-wide min-w-[150px]">
@@ -313,52 +341,80 @@ export default function NonControllableTable({ plan, scenarioId }) {
             </tr>
           </thead>
           <tbody>
-            {departments.map((dept) => (
-              <>
-                <tr key={`${dept.department_name}-hdr`} className="bg-gray-50/80 border-t-2 border-gray-200">
-                  <td colSpan={TOTAL_COLS} className="sticky left-0 px-4 py-2 text-xs font-semibold text-gray-800 uppercase tracking-wide bg-gray-50/80">
-                    {dept.department_name}
-                    {dept.department_code && (
-                      <span className="ml-1.5 font-normal text-gray-400">({dept.department_code})</span>
-                    )}
-                  </td>
-                </tr>
-                <ReadOnlyRow
-                  key={`${dept.department_name}-current`}
-                  dept={dept}
-                  rowClass="border-b border-gray-100 bg-white"
-                  isForecastMap={dept.current_is_forecast}
-                />
-                <EditableRow
-                  key={`${dept.department_name}-approved_rec`}
-                  dept={dept}
-                  scenarioId={scenarioId}
-                  label="Current Approved Rec"
-                  rowClass="border-b border-gray-100 bg-white"
-                  initialAmounts={dept.approved_rec}
-                  entryId={dept.approved_rec_entry_id}
-                  entryType="APPROVED_REC"
-                  entryStatus={dept.approved_rec_status}
-                  userRole={userRole}
-                  isSelected={selected.has(dept.approved_rec_entry_id)}
-                  onToggle={toggleRow}
-                />
-                <EditableRow
-                  key={`${dept.department_name}-additional_ask`}
-                  dept={dept}
-                  scenarioId={scenarioId}
-                  label="Additional Ask"
-                  rowClass="border-b border-gray-100 bg-amber-50/20"
-                  initialAmounts={dept.additional_ask}
-                  entryId={dept.additional_ask_entry_id}
-                  entryType="ADDITIONAL_ASK"
-                  entryStatus={dept.additional_ask_status}
-                  userRole={userRole}
-                  isSelected={selected.has(dept.additional_ask_entry_id)}
-                  onToggle={toggleRow}
-                />
-              </>
-            ))}
+            {departments.map((dept) => {
+              const isCollapsed = collapsed.has(dept.department_name);
+              return (
+                <>
+                  <tr
+                    key={`${dept.department_name}-hdr`}
+                    onClick={() => toggleDept(dept.department_name)}
+                    className="bg-gray-50/80 border-t-2 border-gray-200 cursor-pointer hover:bg-gray-100/80 select-none"
+                  >
+                    <td colSpan={TOTAL_COLS} className="sticky left-0 px-4 py-2 text-xs font-semibold text-gray-800 uppercase tracking-wide bg-gray-50/80">
+                      <div className="flex items-center gap-1.5">
+                        {/* Chevron */}
+                        <svg
+                          className={`w-3.5 h-3.5 text-gray-400 shrink-0 transition-transform duration-150 ${isCollapsed ? "-rotate-90" : ""}`}
+                          fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}
+                        >
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                        </svg>
+                        {dept.department_name}
+                        {dept.department_code && (
+                          <span className="ml-1 font-normal text-gray-400">({dept.department_code})</span>
+                        )}
+                        {isCollapsed && (
+                          <span className="ml-2 text-[10px] font-normal normal-case text-gray-400 italic">
+                            {[
+                              dept.approved_rec?.annual > 0 && `Rec: ${fmt(dept.approved_rec.annual)}`,
+                              dept.additional_ask?.annual > 0 && `Ask: ${fmt(dept.additional_ask.annual)}`,
+                            ].filter(Boolean).join(" · ")}
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                  {!isCollapsed && (
+                    <>
+                      <ReadOnlyRow
+                        key={`${dept.department_name}-current`}
+                        dept={dept}
+                        rowClass="border-b border-gray-100 bg-white"
+                        isForecastMap={dept.current_is_forecast}
+                      />
+                      <EditableRow
+                        key={`${dept.department_name}-approved_rec`}
+                        dept={dept}
+                        scenarioId={scenarioId}
+                        label="Current Approved Rec"
+                        rowClass="border-b border-gray-100 bg-white"
+                        initialAmounts={dept.approved_rec}
+                        entryId={dept.approved_rec_entry_id}
+                        entryType="APPROVED_REC"
+                        entryStatus={dept.approved_rec_status}
+                        userRole={userRole}
+                        isSelected={selected.has(dept.approved_rec_entry_id)}
+                        onToggle={toggleRow}
+                      />
+                      <EditableRow
+                        key={`${dept.department_name}-additional_ask`}
+                        dept={dept}
+                        scenarioId={scenarioId}
+                        label="Additional Ask"
+                        rowClass="border-b border-gray-100 bg-amber-50/20"
+                        initialAmounts={dept.additional_ask}
+                        entryId={dept.additional_ask_entry_id}
+                        entryType="ADDITIONAL_ASK"
+                        entryStatus={dept.additional_ask_status}
+                        userRole={userRole}
+                        isSelected={selected.has(dept.additional_ask_entry_id)}
+                        onToggle={toggleRow}
+                      />
+                    </>
+                  )}
+                </>
+              );
+            })}
 
             {/* Grand Total rows */}
             <tr className="bg-gray-100 border-t-2 border-gray-300">
