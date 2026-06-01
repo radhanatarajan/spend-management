@@ -3,9 +3,7 @@ import { useBudgetAuditReport } from "../../data/budget/hooks";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-const fmtFull = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const fmtCompact = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 });
-const fmtUSD = (v) => v != null ? fmtFull.format(Number(v)) : "—";
 const fmtK   = (v) => v != null ? fmtCompact.format(Number(v)) : "—";
 
 function fmtDate(iso) {

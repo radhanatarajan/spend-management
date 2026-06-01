@@ -12,6 +12,20 @@ export function AuthProvider({ children }) {
     try { return JSON.parse(localStorage.getItem(USER_KEY)); } catch { return null; }
   });
 
+  const login = useCallback((accessToken, userData) => {
+    localStorage.setItem(TOKEN_KEY, accessToken);
+    localStorage.setItem(USER_KEY, JSON.stringify(userData));
+    setToken(accessToken);
+    setUser(userData);
+  }, []);
+
+  const logout = useCallback(() => {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+    setToken(null);
+    setUser(null);
+  }, []);
+
   // Attach / detach Bearer token on every axios request
   useEffect(() => {
     const id = axios.interceptors.request.use((config) => {
@@ -31,21 +45,7 @@ export function AuthProvider({ children }) {
       }
     );
     return () => axios.interceptors.response.eject(id);
-  }, []);
-
-  const login = useCallback((accessToken, userData) => {
-    localStorage.setItem(TOKEN_KEY, accessToken);
-    localStorage.setItem(USER_KEY, JSON.stringify(userData));
-    setToken(accessToken);
-    setUser(userData);
-  }, []);
-
-  const logout = useCallback(() => {
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(USER_KEY);
-    setToken(null);
-    setUser(null);
-  }, []);
+  }, [logout]);
 
   return (
     <AuthContext.Provider value={{ token, user, login, logout, isAuthenticated: !!token }}>
@@ -54,6 +54,7 @@ export function AuthProvider({ children }) {
   );
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error("useAuth must be used inside AuthProvider");

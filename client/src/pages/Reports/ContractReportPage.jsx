@@ -66,17 +66,9 @@ function KpiCard({ label, value, sub }) {
 // ── Monthly table ─────────────────────────────────────────────────────────────
 
 function MonthlyTable({ report, rows }) {
-  if (!rows.length) {
-    return (
-      <div className="bg-white border border-gray-200 rounded-xl p-8 text-center text-sm text-gray-400">
-        No contracts with coverage in this fiscal year.
-      </div>
-    );
-  }
+  const { month_keys, month_labels } = report;
 
-  const { month_keys, month_labels, monthly_totals } = report;
-
-  // Recompute monthly totals based on filtered rows
+  // Recompute monthly totals based on filtered rows (must be before early return — hooks rules)
   const filteredTotals = useMemo(() => {
     const t = {};
     for (const key of month_keys) {
@@ -86,6 +78,14 @@ function MonthlyTable({ report, rows }) {
   }, [rows, month_keys]);
 
   const filteredGrandTotal = rows.reduce((s, r) => s + Number(r.fiscal_year_total), 0);
+
+  if (!rows.length) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-xl p-8 text-center text-sm text-gray-400">
+        No contracts with coverage in this fiscal year.
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
@@ -204,8 +204,6 @@ export default function ContractReportPage() {
   const numVendors     = new Set(filteredRows.map((r) => r.vendor_name)).size;
   const grandTotal     = filteredRows.reduce((s, r) => s + Number(r.fiscal_year_total), 0);
   const assumedTotal   = filteredRows.reduce((s, r) => s + Number(r.assumed_total), 0);
-  const avgPerContract = numContracts ? grandTotal / numContracts : 0;
-
   return (
     <div className="p-6 space-y-5">
 
