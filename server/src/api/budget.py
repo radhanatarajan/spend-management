@@ -463,6 +463,19 @@ def get_non_controllable_plan(
         (e.department_name, e.entry_type): e for e in entries
     }
 
+    # Include departments that have entries but no prior-year spend data
+    for dept_name in {e.department_name for e in entries}:
+        if dept_name not in dept_rows:
+            dept_rows[dept_name] = DepartmentBudgetRow(
+                department_name=dept_name,
+                department_code=None,
+                current=QuarterlyAmounts(),
+                current_is_forecast={"q1": False, "q2": False, "q3": False, "q4": False},
+                approved_rec=QuarterlyAmounts(),
+                additional_ask=QuarterlyAmounts(),
+            )
+    all_depts = sorted(dept_rows.keys())
+
     for dept in all_depts:
         row = dept_rows.get(dept)
         if not row:
@@ -569,6 +582,13 @@ def upsert_entry(
     def _dec_str(v) -> str | None:
         return str(v) if v is not None else None
 
+    def _amounts_differ(a, b) -> bool:
+        if (a is None) != (b is None):
+            return True
+        if a is None:
+            return False
+        return Decimal(str(a)) != Decimal(str(b))
+
     changes = {}
     for field, old_val, new_val in [
         ("q1_amount", old_q1, body.q1_amount),
@@ -576,7 +596,7 @@ def upsert_entry(
         ("q3_amount", old_q3, body.q3_amount),
         ("q4_amount", old_q4, body.q4_amount),
     ]:
-        if _dec_str(old_val) != _dec_str(new_val):
+        if _amounts_differ(old_val, new_val):
             changes[field] = {"old": _dec_str(old_val), "new": _dec_str(new_val)}
 
     if changes:
