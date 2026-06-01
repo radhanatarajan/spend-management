@@ -3,7 +3,6 @@ import { useState, useMemo } from "react";
 const fmtFull = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const fmt = (v) => fmtFull.format(Number(v ?? 0));
 
-const QUARTERS = ["q1", "q2", "q3", "q4"];
 
 export default function WhatIfPanel({ plan }) {
   const [open, setOpen] = useState(false);

@@ -3,9 +3,7 @@ import { useScenarios, useScenarioComparison } from "../../data/budget/hooks";
 import NcComparisonTable from "./components/NcComparisonTable";
 import DropdownSlicer from "../../components/DropdownSlicer";
 
-const fmtFull = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 0 });
 const fmtCompact = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 });
-const fmt = (v) => fmtFull.format(Number(v ?? 0));
 const fmtK = (v) => fmtCompact.format(Number(v ?? 0));
 
 function KpiCard({ label, value, sub, accent }) {
