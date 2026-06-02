@@ -265,6 +265,21 @@ def get_spend_summary(
         .order_by(Spend.month_key)
     ).all()
 
+    cost_element_rows = db.execute(
+        select(Spend.oracle_cost_element, func.sum(Spend.amount_usd))
+        .where(*clauses)
+        .group_by(Spend.oracle_cost_element)
+        .order_by(func.sum(Spend.amount_usd).desc())
+    ).all()
+
+    activity_id_rows = db.execute(
+        select(Spend.activity_id, func.sum(Spend.amount_usd))
+        .where(*clauses)
+        .group_by(Spend.activity_id)
+        .order_by(func.sum(Spend.amount_usd).desc())
+        .limit(15)
+    ).all()
+
     return SpendSummary(
         total_amount=total_amount,
         total_transactions=total_transactions,
@@ -272,6 +287,8 @@ def get_spend_summary(
         by_vendor=[AmountByLabel(label=r[0], amount=r[1], pct=_pct(r[1])) for r in vendor_rows],
         by_department=[AmountByLabel(label=r[0], amount=r[1], pct=_pct(r[1])) for r in dept_rows],
         by_month=[MonthTrend(month_key=r[0], month_label=r[1], amount=r[2]) for r in month_rows],
+        by_cost_element=[AmountByLabel(label=r[0], amount=r[1], pct=_pct(r[1])) for r in cost_element_rows],
+        by_activity_id=[AmountByLabel(label=r[0] or "—", amount=r[1], pct=_pct(r[1])) for r in activity_id_rows],
     )
 
 

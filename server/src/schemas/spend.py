@@ -83,3 +83,5 @@ class SpendSummary(BaseModel):
     by_vendor: List[AmountByLabel]
     by_department: List[AmountByLabel]
     by_month: List[MonthTrend]
+    by_cost_element: List[AmountByLabel]
+    by_activity_id: List[AmountByLabel]

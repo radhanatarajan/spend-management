@@ -243,8 +243,10 @@ export default function ReportsPage() {
   const insights  = useMemo(() => computeInsights(summary), [summary]);
   const topVendor = summary?.by_vendor?.[0];
   const topGroup  = summary?.by_account_group?.[0];
-  const groupMax  = summary ? Math.max(...summary.by_account_group.map(g => Number(g.amount))) : 0;
-  const deptMax   = summary ? Math.max(...summary.by_department.map(d => Number(d.amount))) : 0;
+  const groupMax       = summary ? Math.max(...summary.by_account_group.map(g => Number(g.amount))) : 0;
+  const deptMax        = summary ? Math.max(...summary.by_department.map(d => Number(d.amount))) : 0;
+  const costElemMax    = summary ? Math.max(...(summary.by_cost_element ?? []).map(c => Number(c.amount))) : 0;
+  const activityIdMax  = summary ? Math.max(...(summary.by_activity_id ?? []).map(a => Number(a.amount))) : 0;
   const avgTxn    = summary?.total_transactions
     ? Number(summary.total_amount) / summary.total_transactions : 0;
 
@@ -429,7 +431,7 @@ export default function ReportsPage() {
         </div>
 
         <div className="bg-white border border-gray-100 rounded-xl p-4">
-          <div className="text-xs font-medium text-gray-800 mb-1">Spend by Month</div>
+          <div className="text-xs font-medium text-gray-800 mb-2">Spend by Month</div>
           {isLoading ? (
             <div className="flex items-end gap-1.5 h-24 mt-2">
               {[...Array(6)].map((_, i) => (
@@ -448,6 +450,42 @@ export default function ReportsPage() {
               )}
             </>
           )}
+        </div>
+      </div>
+
+      {/* ── Charts row 3 ── */}
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-white border border-gray-100 rounded-xl p-4">
+          <div className="text-xs font-medium text-gray-800 mb-3">Spend by Cost Element</div>
+          {isLoading
+            ? <div className="space-y-3">{[...Array(6)].map((_, i) => <Skeleton key={i} />)}</div>
+            : (summary?.by_cost_element ?? []).length === 0
+              ? <p className="text-xs text-gray-400">No data for this period</p>
+              : (summary.by_cost_element).map((c, i) => (
+                  <HBar key={c.label} label={c.label} amount={c.amount}
+                    maxAmount={costElemMax} color={CHART_COLORS[i % CHART_COLORS.length]} />
+                ))
+          }
+        </div>
+
+        <div className="bg-white border border-gray-100 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs font-medium text-gray-800">Spend by Activity ID</div>
+            <div className="text-[10px] text-gray-400">Top 15</div>
+          </div>
+          {isLoading
+            ? <div className="space-y-3">{[...Array(8)].map((_, i) => <Skeleton key={i} />)}</div>
+            : (summary?.by_activity_id ?? []).length === 0
+              ? <p className="text-xs text-gray-400">No data for this period</p>
+              : (
+                <div className="max-h-64 overflow-y-auto pr-1">
+                  {(summary.by_activity_id).map((a, i) => (
+                    <HBar key={a.label} label={a.label} amount={a.amount}
+                      maxAmount={activityIdMax} color={CHART_COLORS[i % CHART_COLORS.length]} />
+                  ))}
+                </div>
+              )
+          }
         </div>
       </div>
 
