@@ -35,12 +35,34 @@ class TestListTransactions:
         assert resp.json()["total"] == 2
 
     def test_response_shape(self, client, db):
-        seed(db, [make_spend(amount_usd=Decimal("42.50"))])
+        seed(db, [make_spend(amount_usd=Decimal("42.50"), activity_id="AOPEX-0000001")])
         item = client.get("/api/spend/transactions").json()["items"][0]
         assert item["vendor_name"] == "AWS"
         assert float(item["amount_usd"]) == 42.50
         assert "month_label" in item
         assert "oracle_department_name" in item
+        assert item["activity_id"] == "AOPEX-0000001"
+
+    def test_activity_id_null_when_not_set(self, client, db):
+        seed(db, [make_spend()])
+        item = client.get("/api/spend/transactions").json()["items"][0]
+        assert item["activity_id"] is None
+
+    def test_filter_by_activity_id(self, client, db):
+        seed(db, [
+            make_spend(vendor_name="AWS",  activity_id="AOPEX-0000001"),
+            make_spend(vendor_name="Zoom", activity_id="AOPEX-0000002"),
+            make_spend(vendor_name="GCP",  activity_id="AOPEX-0000001"),
+        ])
+        resp = client.get("/api/spend/transactions?activity_ids=AOPEX-0000001")
+        body = resp.json()
+        assert body["total"] == 2
+        assert all(r["activity_id"] == "AOPEX-0000001" for r in body["items"])
+
+    def test_filter_by_activity_id_no_match(self, client, db):
+        seed(db, [make_spend(activity_id="AOPEX-0000001")])
+        resp = client.get("/api/spend/transactions?activity_ids=ACAPEX-9999999")
+        assert resp.json()["total"] == 0
 
     # --- pagination ---
 
@@ -222,3 +244,155 @@ class TestFilterOptions:
         resp = client.get("/api/spend/filter-options?expense_types=Capex&oracle_departments=1100")
         # Vendors cross-filtered by both expense_type=Capex AND dept=1100 → only AWS
         assert resp.json()["vendors"] == ["AWS"]
+
+    def test_returns_distinct_activity_ids(self, client, db):
+        seed(db, [
+            make_spend(activity_id="AOPEX-0000001"),
+            make_spend(activity_id="AOPEX-0000002"),
+            make_spend(activity_id="AOPEX-0000001"),  # duplicate
+            make_spend(activity_id=None),              # null excluded
+        ])
+        ids = client.get("/api/spend/filter-options").json()["activity_ids"]
+        assert sorted(ids) == ["AOPEX-0000001", "AOPEX-0000002"]
+
+    def test_activity_ids_cross_filtered(self, client, db):
+        seed(db, [
+            make_spend(vendor_name="AWS",  activity_id="AOPEX-0000001"),
+            make_spend(vendor_name="Zoom", activity_id="AOPEX-0000002"),
+        ])
+        # Filtering by vendor=AWS should only expose that activity ID
+        resp = client.get("/api/spend/filter-options?vendors=AWS")
+        assert resp.json()["activity_ids"] == ["AOPEX-0000001"]
+
+    def test_activity_id_slicer_shows_all_when_self_filtered(self, client, db):
+        seed(db, [
+            make_spend(vendor_name="AWS",  activity_id="AOPEX-0000001"),
+            make_spend(vendor_name="Zoom", activity_id="AOPEX-0000002"),
+        ])
+        # Filtering by activity_id itself should still show all activity_ids
+        resp = client.get("/api/spend/filter-options?activity_ids=AOPEX-0000001")
+        ids = resp.json()["activity_ids"]
+        assert "AOPEX-0000001" in ids
+        assert "AOPEX-0000002" in ids
+
+
+# ---------------------------------------------------------------------------
+# GET /api/spend/summary
+# ---------------------------------------------------------------------------
+
+class TestSpendSummary:
+    def test_returns_200_with_empty_table(self, client):
+        resp = client.get("/api/spend/summary")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert float(body["total_amount"]) == 0
+        assert body["total_transactions"] == 0
+        assert body["by_account_group"] == []
+        assert body["by_vendor"] == []
+        assert body["by_department"] == []
+        assert body["by_month"] == []
+        assert body["by_cost_element"] == []
+        assert body["by_activity_id"] == []
+
+    def test_total_amount_and_transactions(self, client, db):
+        seed(db, [
+            make_spend(amount_usd=Decimal("1000")),
+            make_spend(amount_usd=Decimal("2000")),
+        ])
+        body = client.get("/api/spend/summary").json()
+        assert float(body["total_amount"]) == 3000
+        assert body["total_transactions"] == 2
+
+    def test_by_account_group_sorted_desc(self, client, db):
+        seed(db, [
+            make_spend(oracle_account_group="R&D",  amount_usd=Decimal("500")),
+            make_spend(oracle_account_group="G&A",  amount_usd=Decimal("1500")),
+            make_spend(oracle_account_group="R&D",  amount_usd=Decimal("300")),
+        ])
+        groups = client.get("/api/spend/summary").json()["by_account_group"]
+        assert groups[0]["label"] == "G&A"
+        assert float(groups[0]["amount"]) == 1500
+        assert groups[1]["label"] == "R&D"
+        assert float(groups[1]["amount"]) == 800
+
+    def test_by_vendor_limited_to_8(self, client, db):
+        seed(db, [make_spend(vendor_name=f"Vendor{i}", amount_usd=Decimal("100")) for i in range(10)])
+        vendors = client.get("/api/spend/summary").json()["by_vendor"]
+        assert len(vendors) <= 8
+
+    def test_by_department(self, client, db):
+        seed(db, [
+            make_spend(oracle_department_name="Engineering", amount_usd=Decimal("600")),
+            make_spend(oracle_department_name="Finance",     amount_usd=Decimal("400")),
+        ])
+        depts = client.get("/api/spend/summary").json()["by_department"]
+        assert depts[0]["label"] == "Engineering"
+        assert float(depts[0]["amount"]) == 600
+
+    def test_by_month_sorted_asc(self, client, db):
+        seed(db, [
+            make_spend(month_key=202603, month_label="Mar 2026", amount_usd=Decimal("300")),
+            make_spend(month_key=202601, month_label="Jan 2026", amount_usd=Decimal("100")),
+            make_spend(month_key=202602, month_label="Feb 2026", amount_usd=Decimal("200")),
+        ])
+        months = client.get("/api/spend/summary").json()["by_month"]
+        keys = [m["month_key"] for m in months]
+        assert keys == sorted(keys)
+
+    def test_by_cost_element_sorted_desc(self, client, db):
+        seed(db, [
+            make_spend(oracle_cost_element="Salaries",    amount_usd=Decimal("2000")),
+            make_spend(oracle_cost_element="Salaries",    amount_usd=Decimal("1000")),
+            make_spend(oracle_cost_element="Data Center", amount_usd=Decimal("500")),
+        ])
+        elems = client.get("/api/spend/summary").json()["by_cost_element"]
+        assert elems[0]["label"] == "Salaries"
+        assert float(elems[0]["amount"]) == 3000
+        assert elems[1]["label"] == "Data Center"
+
+    def test_by_activity_id_sorted_desc(self, client, db):
+        seed(db, [
+            make_spend(activity_id="AOPEX-0000001", amount_usd=Decimal("100")),
+            make_spend(activity_id="AOPEX-0000002", amount_usd=Decimal("900")),
+            make_spend(activity_id="AOPEX-0000001", amount_usd=Decimal("200")),
+        ])
+        acts = client.get("/api/spend/summary").json()["by_activity_id"]
+        assert acts[0]["label"] == "AOPEX-0000002"
+        assert float(acts[0]["amount"]) == 900
+        assert acts[1]["label"] == "AOPEX-0000001"
+        assert float(acts[1]["amount"]) == 300
+
+    def test_by_activity_id_limited_to_15(self, client, db):
+        seed(db, [
+            make_spend(activity_id=f"AOPEX-{i:07d}", amount_usd=Decimal("100"))
+            for i in range(1, 21)
+        ])
+        acts = client.get("/api/spend/summary").json()["by_activity_id"]
+        assert len(acts) <= 15
+
+    def test_percentages_sum_to_100(self, client, db):
+        seed(db, [
+            make_spend(oracle_account_group="R&D", amount_usd=Decimal("300")),
+            make_spend(oracle_account_group="G&A", amount_usd=Decimal("700")),
+        ])
+        groups = client.get("/api/spend/summary").json()["by_account_group"]
+        total_pct = sum(g["pct"] for g in groups)
+        assert abs(total_pct - 100.0) < 0.5
+
+    def test_filter_by_month_keys(self, client, db):
+        seed(db, [
+            make_spend(month_key=202601, amount_usd=Decimal("1000")),
+            make_spend(month_key=202602, amount_usd=Decimal("2000")),
+        ])
+        body = client.get("/api/spend/summary?month_keys=202601").json()
+        assert float(body["total_amount"]) == 1000
+        assert body["total_transactions"] == 1
+
+    def test_filter_by_activity_id(self, client, db):
+        seed(db, [
+            make_spend(activity_id="AOPEX-0000001", amount_usd=Decimal("500")),
+            make_spend(activity_id="AOPEX-0000002", amount_usd=Decimal("300")),
+        ])
+        body = client.get("/api/spend/summary?activity_ids=AOPEX-0000001").json()
+        assert float(body["total_amount"]) == 500
+        assert body["total_transactions"] == 1
