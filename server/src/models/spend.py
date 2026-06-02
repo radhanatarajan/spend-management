@@ -42,6 +42,8 @@ class Spend(Base):
 
     je_source: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
 
+    activity_id: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
+
     amount_usd: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)

@@ -12,13 +12,14 @@ export async function fetchSpend(params) {
   return data;
 }
 
+
 export async function fetchSpendFilterOptions(filters = {}) {
   // Only pass the active filter selections (not sort/page/page_size)
   const { month_keys, expense_types, company_codes, oracle_departments,
-          oracle_account_groups, vendors, je_sources } = filters;
+          oracle_account_groups, vendors, je_sources, activity_ids } = filters;
   const { data } = await axios.get(`${BASE}/filter-options`, {
     params: { month_keys, expense_types, company_codes, oracle_departments,
-              oracle_account_groups, vendors, je_sources },
+              oracle_account_groups, vendors, je_sources, activity_ids },
     paramsSerializer: serializer,
   });
   return data;
@@ -26,10 +27,10 @@ export async function fetchSpendFilterOptions(filters = {}) {
 
 export async function fetchSpendSummary(filters = {}) {
   const { month_keys, expense_types, company_codes, oracle_departments,
-          oracle_account_groups, vendors, je_sources } = filters;
+          oracle_account_groups, vendors, je_sources, activity_ids } = filters;
   const { data } = await axios.get(`${BASE}/summary`, {
     params: { month_keys, expense_types, company_codes, oracle_departments,
-              oracle_account_groups, vendors, je_sources },
+              oracle_account_groups, vendors, je_sources, activity_ids },
     paramsSerializer: serializer,
   });
   return data;
@@ -37,10 +38,10 @@ export async function fetchSpendSummary(filters = {}) {
 
 export async function downloadSpendCsv(filters = {}) {
   const { month_keys, expense_types, company_codes, oracle_departments,
-          oracle_account_groups, vendors, je_sources } = filters;
+          oracle_account_groups, vendors, je_sources, activity_ids } = filters;
   const resp = await axios.get(`${BASE}/export`, {
     params: { month_keys, expense_types, company_codes, oracle_departments,
-              oracle_account_groups, vendors, je_sources },
+              oracle_account_groups, vendors, je_sources, activity_ids },
     paramsSerializer: serializer,
     responseType: "blob",
   });

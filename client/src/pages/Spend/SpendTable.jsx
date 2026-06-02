@@ -70,7 +70,8 @@ export default function SpendTable({ data, loading, fetching, isError, filters, 
           <thead>
             {/* row 1: group headers */}
             <tr>
-              {/* ungrouped: Month, Expense Type, Co. Code */}
+              {/* ungrouped: Activity ID, Month, Expense Type, Co. Code */}
+              <Th label="Activity ID" col="activity_id" filters={filters} onSort={onSort} rowSpan={2} />
               <Th label="Month" col="month_key" filters={filters} onSort={onSort} rowSpan={2} />
               <Th label="Expense Type" col="expense_type" filters={filters} onSort={onSort} rowSpan={2} />
               <Th label="Co. Code" col="company_code" filters={filters} onSort={onSort} rowSpan={2} />
@@ -92,7 +93,6 @@ export default function SpendTable({ data, loading, fetching, isError, filters, 
               <Th label="Cost Element" col="oracle_cost_element" filters={filters} onSort={onSort} rowSpan={2} />
               <Th label="Line Desc." col={null} filters={filters} onSort={onSort} rowSpan={2} />
               <Th label="Vendor" col="vendor_name" filters={filters} onSort={onSort} rowSpan={2} />
-              <Th label="PO" col="po_recon" filters={filters} onSort={onSort} rowSpan={2} />
               <Th label="PO Number" col={null} filters={filters} onSort={onSort} rowSpan={2} />
               <Th label="PO Line" col={null} filters={filters} onSort={onSort} rowSpan={2} />
               <Th label="Invoice No." col={null} filters={filters} onSort={onSort} rowSpan={2} />
@@ -128,6 +128,7 @@ export default function SpendTable({ data, loading, fetching, isError, filters, 
             ) : (
               rows.map((row) => (
                 <tr key={row.id} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-xs text-gray-600">{row.activity_id ?? "–"}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-gray-700">{row.month_label}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-gray-700">{row.expense_type}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-gray-700">{row.company_code}</td>
@@ -141,9 +142,6 @@ export default function SpendTable({ data, loading, fetching, isError, filters, 
                   <td className="px-2 py-1.5 whitespace-nowrap text-gray-700">{row.oracle_cost_element}</td>
                   <td className="px-2 py-1.5 text-gray-500 max-w-[300px] truncate">{row.line_desc ?? "–"}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-gray-700">{row.vendor_name}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-gray-700" title={row.po_description ?? ""}>
-                    {row.po_recon ?? "–"}
-                  </td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-gray-700">{row.purchase_order_number ?? "–"}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-gray-700">{row.purchase_order_line_number ?? "–"}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap text-gray-700">{row.invoice_number ?? "–"}</td>

@@ -70,6 +70,39 @@ If lint fails: fix the code, do not add `// eslint-disable` unless genuinely nec
 
 GitHub Actions runs the same checks automatically on every push to `develop` and every PR to `main` (see `.github/workflows/ci.yml`). A red CI badge = do not merge.
 
+### Branch Protection — Required Check Names
+
+The required status checks on `main` are named exactly:
+- `Backend tests (Python 3.14)`
+- `Frontend lint + build (Node 20)`
+
+These are the `name:` fields of the jobs in `.github/workflows/ci.yml` — **not** the job IDs (`backend`, `frontend`) and **not** prefixed with the workflow name (`CI / ...`).
+
+If branch protection ever needs to be reconfigured, always verify the exact names first:
+```bash
+gh api repos/radhanatarajan/spend-management/commits/{sha}/check-runs --jq '.check_runs[].name'
+```
+
+---
+
+## Local Database Connection
+
+| Field | Value |
+|---|---|
+| Host | 127.0.0.1 |
+| Port | 3306 |
+| Username | spend_user |
+| Password | spend_pass |
+| Schema | spend_management |
+
+**Tables:** `budget_entries`, `budget_entry_audit`, `budget_nc_config`, `budget_scenarios`, `contract_lines`, `contracts`, `spend`, `users`, `v_budget_entry_audit`
+
+Connect via Python:
+```python
+import pymysql
+conn = pymysql.connect(host='127.0.0.1', port=3306, user='spend_user', password='spend_pass', database='spend_management')
+```
+
 ---
 
 ## Dev Stack

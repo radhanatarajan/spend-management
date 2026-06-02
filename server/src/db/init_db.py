@@ -92,6 +92,7 @@ def init_db() -> None:
     _migrate_budget_nc_config()
     _migrate_budget_scenario_status()
     _migrate_budget_audit_view()
+    _migrate_spend_activity_id()
     _seed_db()
     _seed_users()
     _seed_contracts()
@@ -207,6 +208,29 @@ def _migrate_budget_audit_view() -> None:
             ORDER BY bea.changed_at DESC
         """))
         conn.commit()
+
+
+def _migrate_spend_activity_id() -> None:
+    """Add activity_id column to spend table if missing (idempotent, MySQL-compatible)."""
+    with engine.connect() as conn:
+        table_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'spend'"
+        )).scalar()
+        if not table_exists:
+            return
+
+        existing = {
+            row[0] for row in conn.execute(text(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'spend'"
+            ))
+        }
+
+        if "activity_id" not in existing:
+            conn.execute(text("ALTER TABLE spend ADD COLUMN activity_id VARCHAR(20) NULL"))
+            conn.execute(text("ALTER TABLE spend ADD INDEX ix_spend_activity_id (activity_id)"))
+            conn.commit()
 
 
 def _migrate_contract_lines() -> None:
