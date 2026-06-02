@@ -58,6 +58,13 @@ const REPORT_ITEMS = [
   { to: "/reports/budget",       label: "Budget Report",   disabled: true },
 ];
 
+const REFERENCE_ITEMS = [
+  { to: "/reference/departments", label: "Departments" },
+  { to: "/reference/accounts",    label: "Account Numbers" },
+  { to: "/reference/projects",    label: "Project IDs" },
+  { to: "/reference/activities",  label: "Activity IDs" },
+];
+
 const ROLE_BADGE = {
   ADMIN:         "bg-red-100 text-red-700",
   BIZ_ADMIN:     "bg-orange-100 text-orange-700",
@@ -76,6 +83,7 @@ export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const location = useLocation();
   const inReports = location.pathname.startsWith("/reports");
+  const inReference = location.pathname.startsWith("/reference");
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
@@ -151,6 +159,37 @@ export default function Layout({ children }) {
                   </NavLink>
                 )
               )}
+            </div>
+          </div>
+
+          {/* Reference Data section */}
+          <div className="pt-1 pb-1">
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+              inReference ? "text-indigo-700" : "text-gray-600"
+            }`}>
+              <span className={inReference ? "text-indigo-600" : "text-gray-400"}>
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+                </svg>
+              </span>
+              Reference Data
+            </div>
+            <div className="ml-4 pl-3 border-l border-gray-200 mt-0.5 space-y-0.5">
+              {REFERENCE_ITEMS.map(({ to, label }) => (
+                <NavLink
+                  key={to}
+                  to={to}
+                  className={({ isActive }) =>
+                    `flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                      isActive
+                        ? "bg-indigo-50 text-indigo-700"
+                        : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                    }`
+                  }
+                >
+                  {label}
+                </NavLink>
+              ))}
             </div>
           </div>
         </nav>

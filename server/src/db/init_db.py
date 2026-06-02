@@ -10,6 +10,7 @@ from src.models import spend as _spend_module     # noqa: F401 — registers Spe
 from src.models import user as _user_module       # noqa: F401 — registers User with Base.metadata
 from src.models import contract as _contract_module  # noqa: F401 — registers Contract/ContractLine with Base.metadata
 from src.models import budget as _budget_module   # noqa: F401 — registers BudgetScenario/BudgetEntry/BudgetNcConfig with Base.metadata
+from src.models import reference as _reference_module  # noqa: F401 — registers Department/AccountNumber/ProjectId/ActivityId with Base.metadata
 
 
 EXPENSE_TYPES = ["Capex", "Opex", "Travel", "Professional Services", "Marketing"]
@@ -93,10 +94,23 @@ def init_db() -> None:
     _migrate_budget_scenario_status()
     _migrate_budget_audit_view()
     _migrate_spend_activity_id()
+    _migrate_account_desc()
+    _migrate_account_to_surrogate_key()
+    _migrate_project_to_surrogate_key()
+    _migrate_spend_account_gaps_view()
+    _migrate_spend_department_gaps_view()
+    _migrate_spend_activity_gaps_view()
     _seed_db()
     _seed_users()
     _seed_contracts()
     _seed_budget()
+    _seed_reference_data()
+    _seed_project_ids()
+    _seed_activity_ids()
+    _backfill_spend_accounts()
+    _backfill_spend_departments()
+    _backfill_spend_activities()
+    _backfill_account_desc()
 
 
 def _migrate_budget_scenario_status() -> None:
@@ -230,6 +244,360 @@ def _migrate_spend_activity_id() -> None:
         if "activity_id" not in existing:
             conn.execute(text("ALTER TABLE spend ADD COLUMN activity_id VARCHAR(20) NULL"))
             conn.execute(text("ALTER TABLE spend ADD INDEX ix_spend_activity_id (activity_id)"))
+            conn.commit()
+
+
+def _migrate_spend_account_gaps_view() -> None:
+    """Create or replace v_spend_account_gaps — spend oracle_account_numbers with no reference entry."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW v_spend_account_gaps AS
+            SELECT
+                s.oracle_account_number                          AS account_number,
+                s.oracle_account_group                           AS account_group,
+                s.oracle_account_sub_group                       AS account_sub_group,
+                s.oracle_cost_element                            AS cost_element,
+                COUNT(*)                                         AS spend_row_count,
+                MIN(s.month_label)                               AS earliest_month,
+                MAX(s.month_label)                               AS latest_month
+            FROM spend s
+            LEFT JOIN account_numbers an
+                   ON s.oracle_account_number = an.account_number
+            WHERE s.oracle_account_number IS NOT NULL
+              AND an.id IS NULL
+            GROUP BY
+                s.oracle_account_number,
+                s.oracle_account_group,
+                s.oracle_account_sub_group,
+                s.oracle_cost_element
+            ORDER BY s.oracle_account_number
+        """))
+        conn.commit()
+
+
+def _migrate_spend_department_gaps_view() -> None:
+    """Create or replace v_spend_department_gaps — spend oracle_department codes with no reference entry."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW v_spend_department_gaps AS
+            SELECT
+                s.oracle_department                              AS department_code,
+                s.oracle_department_name                         AS department_name,
+                COUNT(*)                                         AS spend_row_count,
+                MIN(s.month_label)                               AS earliest_month,
+                MAX(s.month_label)                               AS latest_month
+            FROM spend s
+            LEFT JOIN departments d
+                   ON s.oracle_department = d.department_code
+            WHERE s.oracle_department IS NOT NULL
+              AND d.department_code IS NULL
+            GROUP BY
+                s.oracle_department,
+                s.oracle_department_name
+            ORDER BY s.oracle_department
+        """))
+        conn.commit()
+
+
+def _migrate_spend_activity_gaps_view() -> None:
+    """Create or replace v_spend_activity_gaps — spend activity_ids with no reference entry."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW v_spend_activity_gaps AS
+            SELECT
+                s.activity_id,
+                s.oracle_department                              AS department_code,
+                s.oracle_department_name                         AS department_name,
+                s.oracle_account_group                           AS account_group,
+                COUNT(*)                                         AS spend_row_count,
+                MIN(s.month_label)                               AS earliest_month,
+                MAX(s.month_label)                               AS latest_month
+            FROM spend s
+            LEFT JOIN activity_ids ai
+                   ON s.activity_id = ai.activity_id
+            WHERE s.activity_id IS NOT NULL
+              AND ai.activity_id IS NULL
+            GROUP BY
+                s.activity_id,
+                s.oracle_department,
+                s.oracle_department_name,
+                s.oracle_account_group
+            ORDER BY s.activity_id
+        """))
+        conn.commit()
+
+
+def _migrate_account_to_surrogate_key() -> None:
+    """Migrate account_numbers from string PK to integer surrogate PK (idempotent).
+
+    Detects migration need by checking for 'id' column on account_numbers.
+    Handles the FK on activity_ids.account_number → replaces with account_id INT FK.
+    """
+    with engine.connect() as conn:
+        acct_cols = {
+            row[0] for row in conn.execute(text(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'account_numbers'"
+            ))
+        }
+        if "id" in acct_cols:
+            return  # already migrated
+
+        act_cols = {
+            row[0] for row in conn.execute(text(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activity_ids'"
+            ))
+        }
+
+        # 1. Add nullable id column to account_numbers
+        conn.execute(text("ALTER TABLE account_numbers ADD COLUMN id INT NULL"))
+
+        # 2. Assign sequential ids to existing rows
+        rows = conn.execute(text(
+            "SELECT account_number FROM account_numbers ORDER BY account_number"
+        )).fetchall()
+        for i, (acct_num,) in enumerate(rows, 1):
+            conn.execute(text(
+                "UPDATE account_numbers SET id = :i WHERE account_number = :an"
+            ), {"i": i, "an": acct_num})
+
+        # 3. Add account_id column to activity_ids and backfill from join
+        if "account_id" not in act_cols:
+            conn.execute(text("ALTER TABLE activity_ids ADD COLUMN account_id INT NULL"))
+            if "account_number" in act_cols:
+                conn.execute(text("""
+                    UPDATE activity_ids ai
+                    JOIN account_numbers an ON ai.account_number = an.account_number
+                    SET ai.account_id = an.id
+                    WHERE ai.account_number IS NOT NULL
+                """))
+
+        # 4. Drop FK from activity_ids.account_number → account_numbers
+        fk_rows = conn.execute(text("""
+            SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activity_ids'
+              AND COLUMN_NAME = 'account_number' AND REFERENCED_TABLE_NAME = 'account_numbers'
+        """)).fetchall()
+        for (fk_name,) in fk_rows:
+            conn.execute(text(f"ALTER TABLE activity_ids DROP FOREIGN KEY `{fk_name}`"))
+
+        # 5. Drop account_number index + column from activity_ids
+        if "account_number" in act_cols:
+            idx_rows = conn.execute(text("""
+                SELECT DISTINCT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activity_ids'
+                  AND COLUMN_NAME = 'account_number' AND INDEX_NAME != 'PRIMARY'
+            """)).fetchall()
+            for (idx_name,) in idx_rows:
+                conn.execute(text(f"ALTER TABLE activity_ids DROP INDEX `{idx_name}`"))
+            conn.execute(text("ALTER TABLE activity_ids DROP COLUMN account_number"))
+
+        # 6. Add index on activity_ids.account_id
+        conn.execute(text(
+            "CREATE INDEX ix_activity_ids_account_id ON activity_ids (account_id)"
+        ))
+
+        # 7. Drop old string PK on account_numbers and promote id as PK + AUTO_INCREMENT
+        conn.execute(text("ALTER TABLE account_numbers MODIFY COLUMN id INT NOT NULL"))
+        conn.execute(text("ALTER TABLE account_numbers DROP PRIMARY KEY"))
+        conn.execute(text(
+            "ALTER TABLE account_numbers MODIFY COLUMN id INT NOT NULL AUTO_INCREMENT, "
+            "ADD PRIMARY KEY (id)"
+        ))
+
+        # 8. Rewrite account_number values to ACC-{id:04d} format
+        all_rows = conn.execute(text(
+            "SELECT id, account_number FROM account_numbers"
+        )).fetchall()
+        for (acct_id, _) in all_rows:
+            conn.execute(text(
+                "UPDATE account_numbers SET account_number = :code WHERE id = :id"
+            ), {"code": f"ACC-{acct_id:04d}", "id": acct_id})
+
+        # 9. Add UNIQUE constraint on account_number and new FK from activity_ids
+        conn.execute(text(
+            "ALTER TABLE account_numbers ADD UNIQUE KEY uq_account_number (account_number)"
+        ))
+        conn.execute(text("""
+            ALTER TABLE activity_ids
+            ADD CONSTRAINT fk_activity_account_id
+            FOREIGN KEY (account_id) REFERENCES account_numbers(id) ON DELETE SET NULL
+        """))
+
+        conn.commit()
+
+
+def _migrate_project_to_surrogate_key() -> None:
+    """Convert project_ids from string PK to integer surrogate PK. Fully resumable/idempotent."""
+    with engine.connect() as conn:
+        if not conn.execute(text(
+            "SELECT COUNT(*) FROM information_schema.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_ids'"
+        )).scalar_one():
+            return
+
+        def pi_cols():
+            return {r[0] for r in conn.execute(text(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_ids'"
+            ))}
+
+        # Done when old string PK column is gone
+        if 'project_id' not in pi_cols():
+            return
+
+        # Step 1: Add new columns (idempotent)
+        existing = pi_cols()
+        for col, ddl in [
+            ('id',             "ALTER TABLE project_ids ADD COLUMN id INT NULL"),
+            ('project_number', "ALTER TABLE project_ids ADD COLUMN project_number VARCHAR(20) NULL"),
+            ('project_name',   "ALTER TABLE project_ids ADD COLUMN project_name VARCHAR(100) NULL"),
+        ]:
+            if col not in existing:
+                conn.execute(text(ddl))
+        conn.commit()
+
+        # Step 2: Populate if any rows still have id = NULL
+        if conn.execute(text("SELECT COUNT(*) FROM project_ids WHERE id IS NULL")).scalar_one():
+            conn.execute(text("SET @row := 0"))
+            conn.execute(text("UPDATE project_ids SET id = (@row := @row + 1) ORDER BY project_id"))
+            conn.execute(text(
+                "UPDATE project_ids "
+                "SET project_number = CONCAT('PRJ-', LPAD(id, 4, '0')), project_name = project_id "
+                "WHERE project_number IS NULL"
+            ))
+            conn.commit()
+
+        # Step 3: Migrate project_departments string FK → int FK
+        pd_project_id_type = conn.execute(text(
+            "SELECT DATA_TYPE FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_departments' "
+            "AND COLUMN_NAME = 'project_id'"
+        )).scalar()
+        if pd_project_id_type == 'varchar':
+            pd_cols = {r[0] for r in conn.execute(text(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_departments'"
+            ))}
+            if 'new_project_id' not in pd_cols:
+                conn.execute(text("ALTER TABLE project_departments ADD COLUMN new_project_id INT NULL"))
+            conn.execute(text("""
+                UPDATE project_departments pd
+                JOIN project_ids pi ON pd.project_id = pi.project_id
+                SET pd.new_project_id = pi.id WHERE pd.new_project_id IS NULL
+            """))
+            # Drop FK before PK — InnoDB requires the PK as an index backing the FK,
+            # so we must remove the FK constraint first or we get error 1553.
+            fk_pd = conn.execute(text("""
+                SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_departments'
+                AND COLUMN_NAME = 'project_id' AND REFERENCED_TABLE_NAME = 'project_ids'
+            """)).scalar()
+            if fk_pd:
+                conn.execute(text(f"ALTER TABLE project_departments DROP FOREIGN KEY `{fk_pd}`"))
+            conn.execute(text("ALTER TABLE project_departments DROP PRIMARY KEY"))
+            conn.execute(text("ALTER TABLE project_departments DROP COLUMN project_id"))
+            conn.execute(text("ALTER TABLE project_departments RENAME COLUMN new_project_id TO project_id"))
+            conn.execute(text("ALTER TABLE project_departments ADD PRIMARY KEY (project_id, department_code)"))
+            conn.commit()
+
+        # Step 4: Migrate activity_ids.project_id string FK → int FK
+        ai_project_id_type = conn.execute(text(
+            "SELECT DATA_TYPE FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activity_ids' "
+            "AND COLUMN_NAME = 'project_id'"
+        )).scalar()
+        if ai_project_id_type == 'varchar':
+            ai_cols = {r[0] for r in conn.execute(text(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activity_ids'"
+            ))}
+            if 'new_project_id' not in ai_cols:
+                conn.execute(text("ALTER TABLE activity_ids ADD COLUMN new_project_id INT NULL"))
+            conn.execute(text("""
+                UPDATE activity_ids ai
+                JOIN project_ids pi ON ai.project_id = pi.project_id
+                SET ai.new_project_id = pi.id
+                WHERE ai.project_id IS NOT NULL AND ai.new_project_id IS NULL
+            """))
+            fk_ai = conn.execute(text("""
+                SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activity_ids'
+                AND COLUMN_NAME = 'project_id' AND REFERENCED_TABLE_NAME = 'project_ids'
+            """)).scalar()
+            idx_ai = conn.execute(text("""
+                SELECT INDEX_NAME FROM information_schema.STATISTICS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activity_ids'
+                AND COLUMN_NAME = 'project_id' AND INDEX_NAME != 'PRIMARY' LIMIT 1
+            """)).scalar()
+            if fk_ai:
+                conn.execute(text(f"ALTER TABLE activity_ids DROP FOREIGN KEY `{fk_ai}`"))
+            if idx_ai:
+                conn.execute(text(f"ALTER TABLE activity_ids DROP INDEX `{idx_ai}`"))
+            conn.execute(text("ALTER TABLE activity_ids DROP COLUMN project_id"))
+            conn.execute(text("ALTER TABLE activity_ids RENAME COLUMN new_project_id TO project_id"))
+            conn.execute(text("ALTER TABLE activity_ids ADD INDEX ix_activity_ids_project_id (project_id)"))
+            conn.commit()
+
+        # Step 5: Fix project_ids — drop old string PK + desc, promote int id as PK
+        cur = pi_cols()
+        conn.execute(text("ALTER TABLE project_ids DROP PRIMARY KEY"))
+        conn.execute(text("ALTER TABLE project_ids DROP COLUMN project_id"))
+        if 'project_id_desc' in cur:
+            conn.execute(text("ALTER TABLE project_ids DROP COLUMN project_id_desc"))
+        conn.execute(text(
+            "ALTER TABLE project_ids MODIFY COLUMN id INT NOT NULL AUTO_INCREMENT, ADD PRIMARY KEY (id)"
+        ))
+        conn.execute(text("ALTER TABLE project_ids MODIFY COLUMN project_number VARCHAR(20) NOT NULL"))
+        if not conn.execute(text(
+            "SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_ids' "
+            "AND CONSTRAINT_NAME = 'uq_project_number'"
+        )).scalar_one():
+            conn.execute(text("ALTER TABLE project_ids ADD UNIQUE KEY uq_project_number (project_number)"))
+        conn.execute(text("ALTER TABLE project_ids MODIFY COLUMN project_name VARCHAR(100) NOT NULL"))
+        conn.commit()
+
+        # Step 6: Re-add FK constraints (check before adding)
+        if not conn.execute(text("""
+            SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'project_departments'
+            AND COLUMN_NAME = 'project_id' AND REFERENCED_TABLE_NAME = 'project_ids'
+        """)).scalar_one():
+            conn.execute(text("""
+                ALTER TABLE project_departments ADD CONSTRAINT fk_pd_project_id
+                FOREIGN KEY (project_id) REFERENCES project_ids (id) ON DELETE CASCADE
+            """))
+        if not conn.execute(text("""
+            SELECT COUNT(*) FROM information_schema.KEY_COLUMN_USAGE
+            WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'activity_ids'
+            AND COLUMN_NAME = 'project_id' AND REFERENCED_TABLE_NAME = 'project_ids'
+        """)).scalar_one():
+            conn.execute(text("""
+                ALTER TABLE activity_ids ADD CONSTRAINT fk_ai_project_id
+                FOREIGN KEY (project_id) REFERENCES project_ids (id) ON DELETE SET NULL
+            """))
+        conn.commit()
+
+
+def _migrate_account_desc() -> None:
+    """Add account_desc column to account_numbers table if missing (idempotent, MySQL-compatible)."""
+    with engine.connect() as conn:
+        table_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'account_numbers'"
+        )).scalar()
+        if not table_exists:
+            return
+        existing = {
+            row[0] for row in conn.execute(text(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'account_numbers'"
+            ))
+        }
+        if "account_desc" not in existing:
+            conn.execute(text("ALTER TABLE account_numbers ADD COLUMN account_desc VARCHAR(255) NULL"))
             conn.commit()
 
 
@@ -501,5 +869,320 @@ def _seed_budget() -> None:
                 ))
 
         db.commit()
+    finally:
+        db.close()
+
+
+def _seed_reference_data() -> None:
+    from src.models.reference import AccountNumber, Department
+    from src.models.spend import Spend
+
+    db = SessionLocal()
+    try:
+        dept_count = db.execute(select(func.count()).select_from(Department)).scalar_one()
+        if dept_count == 0:
+            for code, name in ORACLE_DEPTS:
+                db.add(Department(department_code=code, department_name=name))
+            db.commit()
+
+        acct_count = db.execute(select(func.count()).select_from(AccountNumber)).scalar_one()
+        if acct_count == 0:
+            rows = db.execute(
+                select(
+                    Spend.oracle_account_number,
+                    Spend.oracle_account_group,
+                    Spend.oracle_account_sub_group,
+                    Spend.oracle_cost_element,
+                ).distinct()
+            ).all()
+            seen: set[str] = set()
+            for row in rows:
+                acct_num, acct_group, acct_sub, cost_elem = row[0], row[1], row[2], row[3]
+                if acct_num and acct_num not in seen:
+                    seen.add(acct_num)
+                    db.add(AccountNumber(
+                        account_number=acct_num,
+                        account_desc=_build_account_desc(acct_group, acct_sub, cost_elem),
+                        account_group=acct_group,
+                        account_sub_group=acct_sub,
+                        cost_element=cost_elem,
+                    ))
+            db.commit()
+    finally:
+        db.close()
+
+
+def _build_account_desc(account_group: str | None, account_sub_group: str | None, cost_element: str | None) -> str | None:
+    """Generate a human-readable description from account fields.
+    Format: "<sub_group> — <account_group> / <cost_element>"
+    Examples: "Engineering Salaries — R&D / Salaries", "AWS — Infrastructure / Hosting"
+    """
+    if account_sub_group and account_group and cost_element:
+        return f"{account_sub_group} — {account_group} / {cost_element}"
+    if account_sub_group and account_group:
+        return f"{account_sub_group} — {account_group}"
+    if account_sub_group:
+        return account_sub_group
+    if account_group and cost_element:
+        return f"{account_group} / {cost_element}"
+    return account_group
+
+
+def _assign_project(expense_type: str | None, account_group: str | None, account_sub_group: str | None) -> str | None:
+    """Map a spend row's expense_type + account_group + sub_group to a project_id."""
+    ag = (account_group or "").strip()
+    sg = (account_sub_group or "").strip()
+    et = (expense_type or "").strip().upper()
+
+    if et == "CAPEX":
+        if "Network" in sg:
+            return "CAPEX-NET-INFRA"
+        if any(k in sg for k in ("Computer", "Peripheral", "Personal Computer")):
+            return "CAPEX-COMPUTE"
+        if "Software" in sg:
+            return "CAPEX-SOFTWARE"
+        if ag == "Data Services":
+            return "CAPEX-DC"
+        return "CAPEX-MISC"
+
+    # OPEX (and anything else)
+    if ag in ("Labor", "Staff Related Expenses"):
+        return "OPEX-LABOR"
+    if ag == "Data Services":
+        if any(k in sg for k in ("DC Power", "DC Rent", "DC Professional Services", "DC Services")):
+            return "OPEX-DC-OPS"
+        return "OPEX-CLOUD"
+    if ag in ("Equipment & Software Expense",):
+        return "OPEX-SAAS"
+    if ag in ("Contract & Professional Services", "Temporary & Consulting"):
+        return "OPEX-CONSULTING"
+    if ag == "Telephone & Related":
+        return "OPEX-TELECOM"
+    return "OPEX-G-AND-A"
+
+
+def _seed_project_ids() -> None:
+    from src.models.reference import ProjectId, Department
+
+    db = SessionLocal()
+    try:
+        if db.execute(select(func.count()).select_from(ProjectId)).scalar_one() > 0:
+            return
+
+        all_depts = {d.department_code: d for d in db.query(Department).all()}
+
+        def depts(*codes):
+            return [all_depts[c] for c in codes if c in all_depts]
+
+        project_names = [
+            ("CAPEX-NET-INFRA", depts("1100", "1200", "1600", "1700", "1800")),
+            ("CAPEX-COMPUTE",   depts("1100", "1200", "1300", "1700", "1800")),
+            ("CAPEX-SOFTWARE",  depts("1100", "1200", "1300", "1400", "1600", "1800")),
+            ("CAPEX-DC",        depts("1100", "1500")),
+            ("CAPEX-MISC",      depts("1100", "1200", "1300", "1400", "1500", "1600", "1700", "1800")),
+            ("OPEX-DC-OPS",     depts("1100", "1200", "1300", "1400", "1500", "1600", "1700", "1800")),
+            ("OPEX-CLOUD",      depts("1100", "1200", "1400", "1500", "1800")),
+            ("OPEX-SAAS",       depts("1100", "1300", "1400", "1500", "1600", "1800")),
+            ("OPEX-LABOR",      depts("1100", "1200", "1300", "1500", "1600", "1800")),
+            ("OPEX-CONSULTING", depts("1100", "1200", "1300", "1500", "1600", "1700")),
+            ("OPEX-TELECOM",    depts("1100", "1300", "1500", "1800")),
+            ("OPEX-G-AND-A",    depts("1100", "1200", "1300", "1400", "1500", "1600", "1700", "1800")),
+        ]
+        for name, dept_list in project_names:
+            proj = ProjectId(project_number="__TEMP__", project_name=name, departments=dept_list)
+            db.add(proj)
+            db.flush()
+            proj.project_number = f"PRJ-{proj.id:04d}"
+        db.commit()
+    finally:
+        db.close()
+
+
+def _seed_activity_ids() -> None:
+    from src.models.reference import ActivityId, AccountNumber, ProjectId
+    from src.models.spend import Spend
+
+    db = SessionLocal()
+    try:
+        if db.execute(select(func.count()).select_from(ActivityId)).scalar_one() > 0:
+            return
+
+        acct_map = {a.account_number: a.id for a in db.query(AccountNumber).all()}
+        proj_map = {p.project_name: p.id for p in db.query(ProjectId).all()}
+
+        rows = db.execute(text("""
+            SELECT
+                activity_id,
+                oracle_department,
+                oracle_department_name,
+                oracle_account_number,
+                expense_type,
+                oracle_account_group,
+                oracle_account_sub_group,
+                COUNT(*) AS cnt
+            FROM spend
+            WHERE activity_id IS NOT NULL
+            GROUP BY activity_id, oracle_department, oracle_account_number,
+                     expense_type, oracle_account_group, oracle_account_sub_group,
+                     oracle_department_name
+            ORDER BY activity_id, cnt DESC
+        """)).fetchall()
+
+        seen: set[str] = set()
+        for row in rows:
+            act_id = row[0]
+            if act_id in seen:
+                continue
+            seen.add(act_id)
+            dept_code    = row[1]
+            acct_num     = row[3]
+            expense_type = row[4]
+            acct_group   = row[5]
+            acct_sub     = row[6]
+
+            desc = f"{acct_group} / {acct_sub}" if acct_sub else acct_group
+            project_name = _assign_project(expense_type, acct_group, acct_sub)
+            db.add(ActivityId(
+                activity_id=act_id,
+                activity_id_desc=desc,
+                department_code=dept_code,
+                account_id=acct_map.get(acct_num),
+                project_id=proj_map.get(project_name),
+            ))
+        db.commit()
+    finally:
+        db.close()
+
+
+def _backfill_spend_activities() -> None:
+    """Add any activity_id values from spend not yet in the activity_ids reference table (idempotent)."""
+    from src.models.reference import ActivityId, AccountNumber, ProjectId
+    from src.models.spend import Spend
+
+    db = SessionLocal()
+    try:
+        existing = {a.activity_id for a in db.query(ActivityId.activity_id).all()}
+        acct_map = {a.account_number: a.id for a in db.query(AccountNumber).all()}
+        proj_map = {p.project_name: p.id for p in db.query(ProjectId).all()}
+
+        rows = db.execute(text("""
+            SELECT
+                activity_id,
+                oracle_department,
+                oracle_account_number,
+                expense_type,
+                oracle_account_group,
+                oracle_account_sub_group,
+                COUNT(*) AS cnt
+            FROM spend
+            WHERE activity_id IS NOT NULL
+            GROUP BY activity_id, oracle_department, oracle_account_number,
+                     expense_type, oracle_account_group, oracle_account_sub_group
+            ORDER BY activity_id, cnt DESC
+        """)).fetchall()
+
+        seen: set[str] = set()
+        added = False
+        for row in rows:
+            act_id = row[0]
+            if act_id in existing or act_id in seen:
+                continue
+            seen.add(act_id)
+            dept_code    = row[1]
+            acct_num     = row[2]
+            expense_type = row[3]
+            acct_group   = row[4]
+            acct_sub     = row[5]
+
+            desc = f"{acct_group} / {acct_sub}" if acct_sub else acct_group
+            project_name = _assign_project(expense_type, acct_group, acct_sub)
+            db.add(ActivityId(
+                activity_id=act_id,
+                activity_id_desc=desc,
+                department_code=dept_code,
+                account_id=acct_map.get(acct_num),
+                project_id=proj_map.get(project_name),
+            ))
+            added = True
+        if added:
+            db.commit()
+    finally:
+        db.close()
+
+
+def _backfill_spend_departments() -> None:
+    """Add any oracle_department codes from spend that are missing from departments (idempotent)."""
+    from src.models.reference import Department
+    from src.models.spend import Spend
+
+    db = SessionLocal()
+    try:
+        existing = {d.department_code for d in db.query(Department.department_code).all()}
+        rows = db.execute(
+            select(Spend.oracle_department, Spend.oracle_department_name).distinct()
+        ).all()
+        seen: set[str] = set()
+        added = False
+        for dept_code, dept_name in rows:
+            if dept_code and dept_code not in existing and dept_code not in seen:
+                seen.add(dept_code)
+                db.add(Department(
+                    department_code=dept_code,
+                    department_name=dept_name or dept_code,
+                ))
+                added = True
+        if added:
+            db.commit()
+    finally:
+        db.close()
+
+
+def _backfill_spend_accounts() -> None:
+    """Add any oracle_account_number values from spend that are missing from account_numbers (idempotent)."""
+    from src.models.reference import AccountNumber
+    from src.models.spend import Spend
+
+    db = SessionLocal()
+    try:
+        existing = {a.account_number for a in db.query(AccountNumber.account_number).all()}
+        rows = db.execute(
+            select(
+                Spend.oracle_account_number,
+                Spend.oracle_account_group,
+                Spend.oracle_account_sub_group,
+                Spend.oracle_cost_element,
+            ).distinct()
+        ).all()
+        seen: set[str] = set()
+        added = False
+        for row in rows:
+            acct_num, acct_group, acct_sub, cost_elem = row[0], row[1], row[2], row[3]
+            if acct_num and acct_num not in existing and acct_num not in seen:
+                seen.add(acct_num)
+                db.add(AccountNumber(
+                    account_number=acct_num,
+                    account_desc=_build_account_desc(acct_group, acct_sub, cost_elem),
+                    account_group=acct_group,
+                    account_sub_group=acct_sub,
+                    cost_element=cost_elem,
+                ))
+                added = True
+        if added:
+            db.commit()
+    finally:
+        db.close()
+
+
+def _backfill_account_desc() -> None:
+    """Populate account_desc for existing rows where it is NULL (idempotent)."""
+    from src.models.reference import AccountNumber
+
+    db = SessionLocal()
+    try:
+        nulls = db.query(AccountNumber).filter(AccountNumber.account_desc.is_(None)).all()
+        for acct in nulls:
+            acct.account_desc = _build_account_desc(acct.account_group, acct.account_sub_group, acct.cost_element)
+        if nulls:
+            db.commit()
     finally:
         db.close()
