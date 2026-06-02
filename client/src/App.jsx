@@ -13,6 +13,10 @@ import ForecastReportPage from "./pages/Reports/ForecastReportPage";
 import BudgetReportPage from "./pages/Reports/BudgetReportPage";
 import BudgetAuditReportPage from "./pages/Reports/BudgetAuditReportPage";
 import ContractReportPage from "./pages/Reports/ContractReportPage";
+import DepartmentsPage from "./pages/Reference/DepartmentsPage";
+import AccountNumbersPage from "./pages/Reference/AccountNumbersPage";
+import ProjectIdsPage from "./pages/Reference/ProjectIdsPage";
+import ActivityIdsPage from "./pages/Reference/ActivityIdsPage";
 
 function App() {
   return (
@@ -37,6 +41,10 @@ function App() {
                     <Route path="/reports/forecast"      element={<ForecastReportPage />} />
                     <Route path="/reports/budget"        element={<BudgetReportPage />} />
                     <Route path="/reports/budget-audit"  element={<BudgetAuditReportPage />} />
+                    <Route path="/reference/departments" element={<DepartmentsPage />} />
+                    <Route path="/reference/accounts"    element={<AccountNumbersPage />} />
+                    <Route path="/reference/projects"    element={<ProjectIdsPage />} />
+                    <Route path="/reference/activities"  element={<ActivityIdsPage />} />
                   </Routes>
                 </Layout>
               </ProtectedRoute>
