@@ -12,7 +12,7 @@ The Spend Analytics module is the primary data-exploration surface of the platfo
 - Spend Analytics table → `/spend`
 - Spend Report (charts + export) → `/reports/spend`
 
-**Seed data** — ~150 synthetic transactions are loaded on first startup across 8 vendors, multiple departments, and the last 12 months. Seeding is skipped if rows already exist.
+**Seed data** — ~177 synthetic transactions are loaded on first startup across multiple vendors, departments, and the last 6 months. Seeding is skipped if rows already exist.
 
 ---
 
@@ -31,22 +31,24 @@ Four metric cards sit above the table and update in real time as filters change:
 
 ### 2.2 Slicer Filters
 
-Seven dropdown slicers appear above the table. Each slicer shows only the values present in the data **after the other slicers are applied** (cross-dependent filtering). Selecting a value triggers a backend query that re-fetches both the transaction list and the available filter options.
+Eight dropdown slicers appear above the table. Each slicer shows only the values present in the data **after the other slicers are applied** (cross-dependent filtering). Selecting a value triggers a backend query that re-fetches both the transaction list and the available filter options.
 
 | Slicer | Field | Notes |
 |---|---|---|
-| Month | `month_key` | YYYYMM integer; displayed as `Jan '25` |
-| Expense Type | `expense_type` | Capex, Opex, Travel, etc. |
+| Month | `month_key` | YYYYMM integer; displayed as `Jan 2026` |
+| Expense Type | `expense_type` | CAPEX or OPEX |
 | Company Code | `company_code` | Oracle company identifier |
-| Department | `oracle_department` | Oracle dept code + name |
-| Acct Group | `oracle_account_group` | R&D, S&M, G&A, Infra, … |
+| Oracle Dept | `oracle_department` | Oracle dept code + name |
+| Acct. Group | `oracle_account_group` | R&D, S&M, G&A, Infra, … |
 | Vendor | `vendor_name` | Supplier name |
 | JE Source | `je_source` | Coupa, Concur, Workday, Oracle, Manual |
+| Activity ID | `activity_id` | Stable cross-month identifier (see §5) |
+
+All slicers support **partial-text search** — type in the dropdown to filter the option list before selecting.
 
 - Select one or multiple values per slicer.
-- Click **Apply Filters** to update the table.
-- Click **Clear** inside a slicer to reset only that filter.
-- Click **Reset All** to clear every filter simultaneously.
+- The badge on each slicer button shows the active selection count.
+- Click **Clear selection** inside a slicer to reset only that filter.
 
 ### 2.3 Transaction Table
 
@@ -54,6 +56,7 @@ The table shows up to 50 rows per page by default. Each column header is clickab
 
 | Column | Field | Notes |
 |---|---|---|
+| Activity ID | `activity_id` | Stable cross-month identifier; monospace font |
 | Month | `month_label` | Derived from `month_key` |
 | Expense Type | `expense_type` | |
 | Co. Code | `company_code` | |
@@ -67,7 +70,6 @@ The table shows up to 50 rows per page by default. Each column header is clickab
 | Cost Element | `oracle_cost_element` | Salaries, Licenses, … |
 | Line Desc | `line_desc` | Free-text description |
 | Vendor | `vendor_name` | |
-| PO | `po_recon` | Hover for description |
 | PO Number | `purchase_order_number` | |
 | PO Line | `purchase_order_line_number` | |
 | Invoice No. | `invoice_number` | |
@@ -104,10 +106,12 @@ Pill buttons at the top-right select the reporting window. The selected period f
 
 | Chart | Description |
 |---|---|
-| Monthly Spend Trend | Bar chart of spend per month in the period |
-| Spend by Account Group | Donut chart (R&D, S&M, G&A, Infra, …) |
-| Top Vendors by Spend | Horizontal bar chart, top 8 vendors |
-| Spend by Department | Breakdown across Oracle departments |
+| Spend by Account Group | Horizontal bar chart ranked by amount (R&D, S&M, G&A, Infra, …) |
+| Vendor Concentration | Donut chart — top 4 vendors + Others |
+| Spend by Department | Horizontal bar chart across Oracle departments |
+| Spend by Month | Bar chart of spend per month in the period |
+| Spend by Cost Element | Horizontal bar chart across all cost elements (Salaries, Data Center, …) |
+| Spend by Activity ID | Horizontal bar chart, top 15 activity IDs by spend; scrollable |
 
 ### 3.4 Insights Panel
 
@@ -115,7 +119,7 @@ Auto-generated text highlights the largest spend category, the fastest-growing v
 
 ### 3.5 CSV Export
 
-The **Download CSV** button exports all transactions matching the current filter to a comma-separated file including all 20 GL columns.
+The **Export CSV** button exports all transactions matching the current period filter to a comma-separated file. The first column is `Activity ID`, followed by all 21 GL columns.
 
 ---
 
@@ -127,39 +131,66 @@ Base URL: `http://localhost:8000` — Swagger UI: `http://localhost:8000/docs`
 |---|---|---|
 | `GET` | `/api/spend/transactions` | Paginated, filtered, sorted transaction list |
 | `GET` | `/api/spend/filter-options` | Distinct slicer values (cross-filtered by active filters) |
+| `GET` | `/api/spend/summary` | Aggregated totals and breakdowns for the report page |
+| `GET` | `/api/spend/export` | Download filtered transactions as a CSV file |
 
-### 4.1 `GET /api/spend/transactions` — Query Parameters
+### 4.1 Common Filter Parameters
+
+All four endpoints accept the same set of filter query parameters:
+
+| Parameter | Type | Description |
+|---|---|---|
+| `month_keys` | int[] | Filter by one or more YYYYMM keys |
+| `expense_types` | str[] | Filter by expense type(s) |
+| `company_codes` | str[] | Filter by company code(s) |
+| `oracle_departments` | str[] | Filter by department code(s) |
+| `oracle_account_groups` | str[] | Filter by account group(s) |
+| `vendors` | str[] | Filter by vendor name(s) |
+| `je_sources` | str[] | Filter by journal entry source(s) |
+| `activity_ids` | str[] | Filter by Activity ID(s) |
+
+### 4.2 `GET /api/spend/transactions` — Additional Parameters
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `page` | int | 1 | Page number (1-indexed) |
-| `page_size` | int | 50 | Rows per page |
+| `page_size` | int | 50 | Rows per page (max 200) |
 | `sort_by` | string | `month_key` | Column to sort by |
-| `sort_dir` | string | `desc` | `asc` or `desc` |
-| `month_key` | int[] | — | Filter by one or more YYYYMM keys |
-| `expense_type` | str[] | — | Filter by expense type(s) |
-| `company_code` | str[] | — | Filter by company code(s) |
-| `oracle_department` | str[] | — | Filter by department code(s) |
-| `oracle_account_group` | str[] | — | Filter by account group(s) |
-| `vendor_name` | str[] | — | Filter by vendor name(s) |
-| `je_source` | str[] | — | Filter by journal entry source(s) |
+| `sort_order` | string | `desc` | `asc` or `desc` |
 
-### 4.2 `GET /api/spend/filter-options`
+### 4.3 `GET /api/spend/filter-options`
 
-Accepts the same filter parameters as `/transactions`. Returns distinct values for each slicer dimension constrained to rows that match the currently applied filters (cross-dependent filtering).
+Returns distinct values for each slicer dimension, cross-filtered by all **other** active slicers. For example, selecting dept `1100` narrows the vendor list to vendors with Engineering spend — but the dept slicer itself still shows all departments.
+
+Response includes: `months`, `expense_types`, `company_codes`, `oracle_departments`, `oracle_account_groups`, `vendors`, `je_sources`, `activity_ids`.
+
+### 4.4 `GET /api/spend/summary`
+
+Returns aggregated breakdowns used by the Spend Report page:
+
+| Field | Description |
+|---|---|
+| `total_amount` | Sum of all filtered transactions |
+| `total_transactions` | Count of filtered rows |
+| `by_account_group` | Amount + % per account group, sorted descending |
+| `by_vendor` | Top 8 vendors by amount |
+| `by_department` | Amount per department, sorted descending |
+| `by_month` | Amount per month, sorted ascending by `month_key` |
+| `by_cost_element` | Amount per cost element, sorted descending |
+| `by_activity_id` | Top 15 activity IDs by amount |
 
 ---
 
 ## 5. Data Model
 
-### `spend_transactions` table
+### `spend` table
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | INT PK | Auto-increment |
 | `month_key` | INT | YYYYMM format, e.g. `202601` |
-| `month_label` | VARCHAR | e.g. `Jan 2026` |
-| `expense_type` | VARCHAR | Capex / Opex / Travel / … |
+| `month_label` | VARCHAR(20) | e.g. `Jan 2026` |
+| `expense_type` | VARCHAR | `CAPEX` or `OPEX` |
 | `company_code` | VARCHAR | Oracle company code |
 | `oracle_organization` | VARCHAR | Business unit |
 | `oracle_account_number` | VARCHAR | GL account number |
@@ -168,13 +199,31 @@ Accepts the same filter parameters as `/transactions`. Returns distinct values f
 | `oracle_cost_center_hierarchy` | VARCHAR | Rollup path |
 | `oracle_account_group` | VARCHAR | R&D / S&M / G&A / … |
 | `oracle_account_sub_group` | VARCHAR | Sub-classification |
-| `oracle_cost_element` | VARCHAR | Salaries / Licenses / … |
-| `line_desc` | VARCHAR | Free-text description |
+| `oracle_cost_element` | VARCHAR | Salaries / Data Center / … |
+| `line_desc` | TEXT | Free-text description (nullable) |
 | `vendor_name` | VARCHAR | Supplier name |
-| `po_recon` | VARCHAR | PO reconciliation code |
-| `purchase_order_number` | VARCHAR | |
-| `purchase_order_line_number` | VARCHAR | |
-| `invoice_number` | VARCHAR | |
-| `invoice_line_number` | VARCHAR | |
-| `je_source` | VARCHAR | Journal entry source |
+| `po_recon` | VARCHAR | PO reconciliation flag (nullable) |
+| `po_description` | TEXT | PO description (nullable) |
+| `purchase_order_number` | VARCHAR | (nullable) |
+| `purchase_order_line_number` | VARCHAR | (nullable) |
+| `invoice_number` | VARCHAR | (nullable) |
+| `invoice_line_number` | VARCHAR | (nullable) |
+| `je_source` | VARCHAR | Journal entry source (nullable) |
+| `activity_id` | VARCHAR(20) | Cross-month stable identifier (nullable, indexed) |
 | `amount_usd` | DECIMAL(14,2) | Transaction amount in USD |
+
+### Activity ID
+
+Activity IDs group logically related spend rows across months so a recurring charge on the same PO (or the same department payroll bucket) can be tracked over time.
+
+**Format:** `ACAPEX-NNNNNNN` for CAPEX rows, `AOPEX-NNNNNNN` for OPEX rows (7-digit zero-padded sequential number per prefix).
+
+**Grouping rules:**
+
+| Condition | Group key (rows that share the same ID) |
+|---|---|
+| Has `purchase_order_number` | `expense_type` + `purchase_order_number` + `purchase_order_line_number` |
+| No PO and `oracle_cost_element = 'Employee Related'` | `expense_type` + `oracle_department` + `oracle_cost_element` + `oracle_account_sub_group` |
+| No PO, all other cost elements | `expense_type` + `vendor_name` + `oracle_cost_element` + `oracle_account_sub_group` |
+
+IDs are assigned by running `server/scripts/populate_activity_ids.py` against the live database. The script is idempotent — re-running it will overwrite existing IDs with freshly computed ones.
