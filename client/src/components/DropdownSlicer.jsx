@@ -1,19 +1,35 @@
 import { useState, useRef, useEffect } from "react";
 
-export default function DropdownSlicer({ title, options, selected, onToggle }) {
+export default function DropdownSlicer({ title, options, selected, onToggle, searchable = false }) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const searchRef = useRef(null);
   const ref = useRef(null);
 
   useEffect(() => {
     function onClickOutside(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+      if (ref.current && !ref.current.contains(e.target)) {
+        setOpen(false);
+        setQuery("");
+      }
     }
     document.addEventListener("mousedown", onClickOutside);
     return () => document.removeEventListener("mousedown", onClickOutside);
   }, []);
 
+  useEffect(() => {
+    if (open && searchable && searchRef.current) searchRef.current.focus();
+  }, [open, searchable]);
+
   const allSelected = selected.length === 0;
   const count = selected.length;
+
+  const visibleOptions = searchable && query.trim()
+    ? options.filter((opt) => {
+        const label = typeof opt === "object" ? opt.label : opt;
+        return label.toLowerCase().includes(query.toLowerCase());
+      })
+    : options;
 
   function toggleAll() {
     onToggle([]);
@@ -30,7 +46,7 @@ export default function DropdownSlicer({ title, options, selected, onToggle }) {
   return (
     <div ref={ref} className="relative">
       <button
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => { setOpen((o) => { if (o) setQuery(""); return !o; }); }}
         className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-sm border rounded-lg bg-white transition-colors ${
           open
             ? "border-indigo-400 ring-2 ring-indigo-100"
@@ -59,18 +75,36 @@ export default function DropdownSlicer({ title, options, selected, onToggle }) {
 
       {open && (
         <div className="absolute z-50 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-lg overflow-hidden">
-          <label className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100">
-            <input
-              type="checkbox"
-              checked={allSelected}
-              onChange={toggleAll}
-              className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-            />
-            <span className="text-sm font-medium text-gray-700">All</span>
-          </label>
+          {searchable && (
+            <div className="px-2 py-2 border-b border-gray-100">
+              <input
+                ref={searchRef}
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search..."
+                className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200"
+              />
+            </div>
+          )}
+
+          {!query && (
+            <label className="flex items-center gap-2 px-3 py-2 hover:bg-gray-50 cursor-pointer border-b border-gray-100">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                onChange={toggleAll}
+                className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+              />
+              <span className="text-sm font-medium text-gray-700">All</span>
+            </label>
+          )}
 
           <div className="max-h-52 overflow-y-auto">
-            {options.map((opt) => {
+            {visibleOptions.length === 0 && (
+              <p className="px-3 py-3 text-sm text-gray-400">No matches</p>
+            )}
+            {visibleOptions.map((opt) => {
               const val = typeof opt === "object" ? opt.value : opt;
               const label = typeof opt === "object" ? opt.label : opt;
               const checked = selected.includes(val);

@@ -24,7 +24,7 @@ from src.schemas.spend import (
 router = APIRouter(prefix="/api/spend", tags=["spend"])
 
 _SORTABLE = {
-    "month_key", "expense_type", "company_code", "oracle_organization",
+    "activity_id", "month_key", "expense_type", "company_code", "oracle_organization",
     "oracle_account_number", "oracle_department", "oracle_department_name",
     "oracle_cost_center_hierarchy", "oracle_account_group", "oracle_account_sub_group",
     "oracle_cost_element", "vendor_name", "po_recon", "je_source", "amount_usd",
@@ -33,7 +33,7 @@ _SORTABLE = {
 
 def _where_clauses(*, month_keys, expense_types, company_codes,
                    oracle_departments, oracle_account_groups, vendors, je_sources,
-                   exclude=()):
+                   activity_ids, exclude=()):
     """Return a list of WHERE conditions, skipping fields listed in exclude."""
     clauses = []
     if month_keys and "month_keys" not in exclude:
@@ -50,6 +50,8 @@ def _where_clauses(*, month_keys, expense_types, company_codes,
         clauses.append(Spend.vendor_name.in_(vendors))
     if je_sources and "je_sources" not in exclude:
         clauses.append(Spend.je_source.in_(je_sources))
+    if activity_ids and "activity_ids" not in exclude:
+        clauses.append(Spend.activity_id.in_(activity_ids))
     return clauses
 
 
@@ -62,6 +64,7 @@ def list_spend(
     oracle_account_groups: Optional[List[str]] = Query(None),
     vendors: Optional[List[str]] = Query(None),
     je_sources: Optional[List[str]] = Query(None),
+    activity_ids: Optional[List[str]] = Query(None),
     sort_by: str = Query("month_key"),
     sort_order: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
@@ -74,7 +77,7 @@ def list_spend(
     fk = dict(
         month_keys=month_keys, expense_types=expense_types, company_codes=company_codes,
         oracle_departments=oracle_departments, oracle_account_groups=oracle_account_groups,
-        vendors=vendors, je_sources=je_sources,
+        vendors=vendors, je_sources=je_sources, activity_ids=activity_ids,
     )
     clauses = _where_clauses(**fk)
 
@@ -110,6 +113,7 @@ def get_filter_options(
     oracle_account_groups: Optional[List[str]] = Query(None),
     vendors: Optional[List[str]] = Query(None),
     je_sources: Optional[List[str]] = Query(None),
+    activity_ids: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
 ):
     """
@@ -120,7 +124,7 @@ def get_filter_options(
     fk = dict(
         month_keys=month_keys, expense_types=expense_types, company_codes=company_codes,
         oracle_departments=oracle_departments, oracle_account_groups=oracle_account_groups,
-        vendors=vendors, je_sources=je_sources,
+        vendors=vendors, je_sources=je_sources, activity_ids=activity_ids,
     )
 
     def clauses(exclude):
@@ -168,6 +172,12 @@ def get_filter_options(
         .order_by(Spend.je_source)
     ).scalars().all()
 
+    activity_id_vals = db.execute(
+        select(distinct(Spend.activity_id))
+        .where(Spend.activity_id.is_not(None), *clauses("activity_ids"))
+        .order_by(Spend.activity_id)
+    ).scalars().all()
+
     return SpendFilterOptions(
         months=[MonthOption(month_key=r[0], month_label=r[1]) for r in months_raw],
         expense_types=list(expense_type_vals),
@@ -179,6 +189,7 @@ def get_filter_options(
         oracle_account_groups=list(group_vals),
         vendors=list(vendor_vals),
         je_sources=list(je_vals),
+        activity_ids=list(activity_id_vals),
     )
 
 
@@ -202,12 +213,13 @@ def get_spend_summary(
     oracle_account_groups: Optional[List[str]] = Query(None),
     vendors: Optional[List[str]] = Query(None),
     je_sources: Optional[List[str]] = Query(None),
+    activity_ids: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
 ):
     fk = dict(
         month_keys=month_keys, expense_types=expense_types, company_codes=company_codes,
         oracle_departments=oracle_departments, oracle_account_groups=oracle_account_groups,
-        vendors=vendors, je_sources=je_sources,
+        vendors=vendors, je_sources=je_sources, activity_ids=activity_ids,
     )
     clauses = _where_clauses(**fk)
 
@@ -272,12 +284,13 @@ def export_spend_csv(
     oracle_account_groups: Optional[List[str]] = Query(None),
     vendors: Optional[List[str]] = Query(None),
     je_sources: Optional[List[str]] = Query(None),
+    activity_ids: Optional[List[str]] = Query(None),
     db: Session = Depends(get_db),
 ):
     fk = dict(
         month_keys=month_keys, expense_types=expense_types, company_codes=company_codes,
         oracle_departments=oracle_departments, oracle_account_groups=oracle_account_groups,
-        vendors=vendors, je_sources=je_sources,
+        vendors=vendors, je_sources=je_sources, activity_ids=activity_ids,
     )
     clauses = _where_clauses(**fk)
 
@@ -290,7 +303,7 @@ def export_spend_csv(
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow([
-        "Month", "Expense Type", "Company Code", "Oracle Org", "Account Number",
+        "Activity ID", "Month", "Expense Type", "Company Code", "Oracle Org", "Account Number",
         "Dept Code", "Dept Name", "Cost Center Hierarchy", "Account Group",
         "Account Sub Group", "Cost Element", "Line Description", "Vendor",
         "PO Recon", "PO Description", "PO Number", "PO Line",
@@ -298,7 +311,7 @@ def export_spend_csv(
     ])
     for r in rows:
         writer.writerow([
-            r.month_label, r.expense_type, r.company_code, r.oracle_organization,
+            r.activity_id, r.month_label, r.expense_type, r.company_code, r.oracle_organization,
             r.oracle_account_number, r.oracle_department, r.oracle_department_name,
             r.oracle_cost_center_hierarchy, r.oracle_account_group, r.oracle_account_sub_group,
             r.oracle_cost_element, r.line_desc, r.vendor_name,

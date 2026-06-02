@@ -85,6 +85,26 @@ gh api repos/radhanatarajan/spend-management/commits/{sha}/check-runs --jq '.che
 
 ---
 
+## Local Database Connection
+
+| Field | Value |
+|---|---|
+| Host | 127.0.0.1 |
+| Port | 3306 |
+| Username | spend_user |
+| Password | spend_pass |
+| Schema | spend_management |
+
+**Tables:** `budget_entries`, `budget_entry_audit`, `budget_nc_config`, `budget_scenarios`, `contract_lines`, `contracts`, `spend`, `users`, `v_budget_entry_audit`
+
+Connect via Python:
+```python
+import pymysql
+conn = pymysql.connect(host='127.0.0.1', port=3306, user='spend_user', password='spend_pass', database='spend_management')
+```
+
+---
+
 ## Dev Stack
 
 | Layer | Technology |

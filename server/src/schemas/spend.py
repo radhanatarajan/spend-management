@@ -29,6 +29,7 @@ class SpendRead(BaseModel):
     invoice_number: Optional[str] = None
     invoice_line_number: Optional[str] = None
     je_source: Optional[str] = None
+    activity_id: Optional[str] = None
     amount_usd: Decimal
     created_at: datetime
     updated_at: datetime
@@ -60,6 +61,7 @@ class SpendFilterOptions(BaseModel):
     oracle_account_groups: List[str]
     vendors: List[str]
     je_sources: List[str]
+    activity_ids: List[str]
 
 
 class AmountByLabel(BaseModel):
