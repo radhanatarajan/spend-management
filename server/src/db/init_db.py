@@ -105,6 +105,8 @@ def init_db() -> None:
     _seed_db()
     _seed_users()
     _seed_contracts()
+    _seed_recurring_contracts()
+    _backfill_workday_renewal()
     _seed_budget()
     _seed_reference_data()
     _seed_project_ids()
@@ -914,6 +916,198 @@ def _seed_contracts() -> None:
                 contract.lines.append(line)
             db.add(contract)
 
+        db.commit()
+    finally:
+        db.close()
+
+
+def _seed_recurring_contracts() -> None:
+    """Seed ACTIVE contracts for recurring spend vendors that have no contract yet.
+
+    Queries spend for vendor+dimension combos with 2+ months of data (among vendors with
+    3+ rows total), then inserts one contract per missing vendor+account_number pair with
+    a single MONTHLY line from first-spend-month through Dec 31 2027.  Idempotent.
+    """
+    from src.models.contract import Contract, ContractLine, ContractStatus, BillingInterval
+    from src.models.spend import Spend
+    from src.schemas.contract import compute_monthly_amount
+
+    db = SessionLocal()
+    try:
+        spend_count = db.execute(select(func.count()).select_from(Spend)).scalar_one()
+        if spend_count == 0:
+            return
+
+        rows = db.execute(text("""
+            SELECT
+                vendor_name,
+                oracle_department,
+                oracle_department_name,
+                oracle_account_number,
+                oracle_account_sub_group,
+                oracle_account_group,
+                COUNT(*)                    AS month_count,
+                MIN(month_key)              AS first_month,
+                ROUND(AVG(amount_usd), 2)  AS avg_monthly
+            FROM spend
+            WHERE vendor_name NOT LIKE 'Internal%%'
+            GROUP BY
+                vendor_name, oracle_department, oracle_department_name,
+                oracle_account_number, oracle_account_sub_group, oracle_account_group
+            HAVING month_count >= 2
+              AND vendor_name IN (
+                  SELECT vendor_name FROM spend GROUP BY vendor_name HAVING COUNT(*) >= 3
+              )
+            ORDER BY vendor_name, month_count DESC
+        """)).fetchall()
+
+        po_counter = 1
+        # Pass 1: insert contracts for stable combos (2+ months same dimension).
+        # AT&T gets two contracts (wireless + internet) — both are genuine recurring.
+        for row in rows:
+            vendor_name      = row[0]
+            oracle_dept      = row[1]
+            oracle_dept_name = row[2]
+            account_number   = row[3]
+            sub_group        = row[4]
+            first_month_int  = row[7]
+            avg_monthly      = Decimal(str(row[8]))
+
+            existing = db.query(Contract).filter(
+                Contract.vendor_name == vendor_name,
+                Contract.oracle_account_number == account_number,
+            ).first()
+            if existing:
+                continue
+
+            ym = str(first_month_int)
+            period_start = date(int(ym[:4]), int(ym[4:]), 1)
+            period_end   = date(2027, 12, 31)
+
+            contract = Contract(
+                vendor_name=vendor_name,
+                oracle_department=oracle_dept,
+                oracle_department_name=oracle_dept_name,
+                oracle_account_number=account_number,
+                oracle_account_sub_group=sub_group,
+                purchase_order_number=f"PO-REC-{po_counter:04d}",
+                status=ContractStatus.ACTIVE,
+            )
+            line = ContractLine(
+                po_line_number=1,
+                period_start=period_start,
+                period_end=period_end,
+                billing_interval=BillingInterval.MONTHLY,
+                entered_amount=avg_monthly,
+            )
+            line.monthly_amount = compute_monthly_amount(
+                line.entered_amount, line.billing_interval, line.period_start, line.period_end
+            )
+            contract.lines.append(line)
+            db.add(contract)
+            po_counter += 1
+
+        db.flush()
+
+        # Pass 2: for recurring vendors with no contract at all yet, pick their dominant dimension.
+        still_missing = db.execute(text("""
+            SELECT
+                vendor_name,
+                oracle_department,
+                oracle_department_name,
+                oracle_account_number,
+                oracle_account_sub_group,
+                oracle_account_group,
+                COUNT(*)                    AS dim_count,
+                MIN(month_key)              AS first_month,
+                ROUND(AVG(amount_usd), 2)  AS avg_monthly
+            FROM spend
+            WHERE vendor_name NOT LIKE 'Internal%%'
+              AND vendor_name IN (
+                  SELECT vendor_name FROM spend GROUP BY vendor_name HAVING COUNT(*) >= 3
+              )
+              AND vendor_name NOT IN (SELECT DISTINCT vendor_name FROM contracts)
+            GROUP BY
+                vendor_name, oracle_department, oracle_department_name,
+                oracle_account_number, oracle_account_sub_group, oracle_account_group
+            ORDER BY vendor_name, dim_count DESC
+        """)).fetchall()
+
+        seen_vendor: set[str] = set()
+        for row in still_missing:
+            vendor_name = row[0]
+            if vendor_name in seen_vendor:
+                continue  # already queued a contract for this vendor in pass 2
+            seen_vendor.add(vendor_name)
+
+            account_number   = row[3]
+            oracle_dept      = row[1]
+            oracle_dept_name = row[2]
+            sub_group        = row[4]
+            first_month_int  = row[7]
+            avg_monthly      = Decimal(str(row[8]))
+
+            ym = str(first_month_int)
+            period_start = date(int(ym[:4]), int(ym[4:]), 1)
+            period_end   = date(2027, 12, 31)
+
+            contract = Contract(
+                vendor_name=vendor_name,
+                oracle_department=oracle_dept,
+                oracle_department_name=oracle_dept_name,
+                oracle_account_number=account_number,
+                oracle_account_sub_group=sub_group,
+                purchase_order_number=f"PO-REC-{po_counter:04d}",
+                status=ContractStatus.ACTIVE,
+            )
+            line = ContractLine(
+                po_line_number=1,
+                period_start=period_start,
+                period_end=period_end,
+                billing_interval=BillingInterval.MONTHLY,
+                entered_amount=avg_monthly,
+            )
+            line.monthly_amount = compute_monthly_amount(
+                line.entered_amount, line.billing_interval, line.period_start, line.period_end
+            )
+            contract.lines.append(line)
+            db.add(contract)
+            po_counter += 1
+
+        db.commit()
+    finally:
+        db.close()
+
+
+def _backfill_workday_renewal() -> None:
+    """Add a renewal line to the Workday contract covering Apr 2027 – Dec 2027 if missing."""
+    from src.models.contract import Contract, ContractLine, BillingInterval
+    from src.schemas.contract import compute_monthly_amount
+
+    db = SessionLocal()
+    try:
+        workday = db.query(Contract).filter(Contract.vendor_name == "Workday").first()
+        if not workday:
+            return
+
+        has_coverage = any(
+            cl.period_end >= date(2027, 12, 1) for cl in workday.lines
+        )
+        if has_coverage:
+            return
+
+        renewal = ContractLine(
+            contract_id=workday.id,
+            po_line_number=2,
+            period_start=date(2027, 4, 1),
+            period_end=date(2027, 12, 31),
+            billing_interval=BillingInterval.MONTHLY,
+            entered_amount=Decimal("22000.00"),
+        )
+        renewal.monthly_amount = compute_monthly_amount(
+            renewal.entered_amount, renewal.billing_interval, renewal.period_start, renewal.period_end
+        )
+        db.add(renewal)
         db.commit()
     finally:
         db.close()
