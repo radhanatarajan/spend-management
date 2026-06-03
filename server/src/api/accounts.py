@@ -3,7 +3,8 @@ from sqlalchemy.orm import Session
 
 from src.core.dependencies import get_current_user, require_write
 from src.db.session import get_db
-from src.models.reference import AccountNumber, ActivityId
+from src.models.reference import AccountNumber, ActivityId, ReferenceAudit
+from src.models.user import User
 from src.schemas.reference import AccountNumberCreate, AccountNumberOut, AccountNumberUpdate
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
@@ -35,7 +36,7 @@ def list_accounts(
 
 
 @router.post("", response_model=AccountNumberOut, status_code=201)
-def create_account(body: AccountNumberCreate, db: Session = Depends(get_db), _=Depends(require_write)):
+def create_account(body: AccountNumberCreate, db: Session = Depends(get_db), current_user: User = Depends(require_write)):
     acct = AccountNumber(
         account_number="__PENDING__",
         account_desc=body.account_desc,
@@ -46,26 +47,54 @@ def create_account(body: AccountNumberCreate, db: Session = Depends(get_db), _=D
     db.add(acct)
     db.flush()
     acct.account_number = f"ACC-{acct.id:04d}"
+    db.add(ReferenceAudit(
+        table_name="account_numbers",
+        record_id=acct.account_number,
+        event_type="CREATED",
+        changes={},
+        changed_by=current_user.email,
+    ))
     db.commit()
     db.refresh(acct)
     return acct
 
 
 @router.put("/{id}", response_model=AccountNumberOut)
-def update_account(id: int, body: AccountNumberUpdate, db: Session = Depends(get_db), _=Depends(require_write)):
+def update_account(id: int, body: AccountNumberUpdate, db: Session = Depends(get_db), current_user: User = Depends(require_write)):
     acct = _get_or_404(id, db)
-    for field, val in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    changes = {
+        f: {"old": getattr(acct, f), "new": v}
+        for f, v in updates.items()
+        if getattr(acct, f) != v
+    }
+    for field, val in updates.items():
         setattr(acct, field, val)
+    if changes:
+        db.add(ReferenceAudit(
+            table_name="account_numbers",
+            record_id=acct.account_number,
+            event_type="UPDATED",
+            changes=changes,
+            changed_by=current_user.email,
+        ))
     db.commit()
     db.refresh(acct)
     return acct
 
 
 @router.delete("/{id}", status_code=204)
-def delete_account(id: int, db: Session = Depends(get_db), _=Depends(require_write)):
+def delete_account(id: int, db: Session = Depends(get_db), current_user: User = Depends(require_write)):
     acct = _get_or_404(id, db)
     ref = db.query(ActivityId).filter(ActivityId.account_id == id).first()
     if ref:
         raise HTTPException(status_code=409, detail="Account number is referenced by one or more activity IDs")
+    db.add(ReferenceAudit(
+        table_name="account_numbers",
+        record_id=acct.account_number,
+        event_type="DELETED",
+        changes={},
+        changed_by=current_user.email,
+    ))
     db.delete(acct)
     db.commit()

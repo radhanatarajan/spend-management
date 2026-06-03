@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, ForeignKey, Integer, String, Table, DateTime
+from sqlalchemy import Column, ForeignKey, Integer, JSON, String, Table, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.db.base import Base
@@ -68,3 +68,15 @@ class ActivityId(Base):
     department: Mapped[Department | None] = relationship("Department", back_populates="activity_ids")
     account: Mapped[AccountNumber | None] = relationship("AccountNumber", back_populates="activity_ids")
     project: Mapped[ProjectId | None] = relationship("ProjectId", back_populates="activity_ids")
+
+
+class ReferenceAudit(Base):
+    __tablename__ = "reference_audit"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    table_name: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    record_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)  # CREATED, UPDATED, DELETED
+    changes: Mapped[dict] = mapped_column(JSON, nullable=False)
+    changed_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
