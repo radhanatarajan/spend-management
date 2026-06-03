@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useBudgetAuditReport } from "../../data/budget/hooks";
+import DropdownSlicer from "../../components/DropdownSlicer";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -48,8 +49,6 @@ function AmountDiff({ oldVal, newVal }) {
   );
 }
 
-// ── Pill filter ───────────────────────────────────────────────────────────────
-
 function Pill({ active, onClick, children }) {
   return (
     <button
@@ -62,20 +61,6 @@ function Pill({ active, onClick, children }) {
     >
       {children}
     </button>
-  );
-}
-
-function MultiPill({ label, options, selected, onToggle }) {
-  return (
-    <div className="flex items-center gap-1.5 flex-wrap">
-      <span className="text-xs text-gray-400 shrink-0">{label}:</span>
-      <Pill active={selected.length === 0} onClick={() => onToggle(null)}>All</Pill>
-      {options.map((o) => (
-        <Pill key={o} active={selected.includes(o)} onClick={() => onToggle(o)}>
-          {o === "APPROVED_REC" ? "Approved Rec" : o === "ADDITIONAL_ASK" ? "Additional Ask" : o}
-        </Pill>
-      ))}
-    </div>
   );
 }
 
@@ -228,11 +213,6 @@ export default function BudgetAuditReportPage() {
 
   const { data: report, isLoading, isError } = useBudgetAuditReport(fiscalYear);
 
-  function toggle(setter, current, value) {
-    if (value === null) return setter([]);
-    setter((prev) => prev.includes(value) ? prev.filter((x) => x !== value) : [...prev, value]);
-  }
-
   const filteredRows = useMemo(() => {
     if (!report) return [];
     return report.rows.filter((r) => {
@@ -278,12 +258,14 @@ export default function BudgetAuditReportPage() {
 
       {/* Filters */}
       {opts && (
-        <div className="bg-white border border-gray-100 rounded-xl px-4 py-3 space-y-2.5">
-          <MultiPill label="Scenario"   options={opts.scenarios}   selected={selScenarios}  onToggle={(v) => toggle(setSelScenarios,  selScenarios,  v)} />
-          <MultiPill label="Department" options={opts.departments} selected={selDepts}       onToggle={(v) => toggle(setSelDepts,      selDepts,      v)} />
-          <MultiPill label="Category"   options={opts.entry_types} selected={selEntryTypes} onToggle={(v) => toggle(setSelEntryTypes, selEntryTypes, v)} />
-          <MultiPill label="Event"      options={opts.event_types} selected={selEventTypes} onToggle={(v) => toggle(setSelEventTypes, selEventTypes, v)} />
-          <MultiPill label="Changed by" options={opts.users}       selected={selUsers}       onToggle={(v) => toggle(setSelUsers,      selUsers,      v)} />
+        <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
+          <div className="grid grid-cols-5 gap-3">
+            <DropdownSlicer title="Scenario"   options={opts.scenarios}   selected={selScenarios}  onToggle={setSelScenarios}  searchable />
+            <DropdownSlicer title="Department" options={opts.departments} selected={selDepts}       onToggle={setSelDepts}       searchable />
+            <DropdownSlicer title="Category"   options={opts.entry_types} selected={selEntryTypes} onToggle={setSelEntryTypes} />
+            <DropdownSlicer title="Event"      options={opts.event_types} selected={selEventTypes} onToggle={setSelEventTypes} />
+            <DropdownSlicer title="Changed By" options={opts.users}       selected={selUsers}       onToggle={setSelUsers}       searchable />
+          </div>
         </div>
       )}
 
