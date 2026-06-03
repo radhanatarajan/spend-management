@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from src.core.dependencies import get_db, require_write, require_any
 from src.models.contract import Contract, ContractLine, ContractAudit, ContractLineAudit, BillingInterval, ContractStatus
+from src.models.reference import AccountNumber
 from src.models.user import User
 from src.schemas.contract import (
     ContractCreate, ContractUpdate, ContractOut,
@@ -88,6 +89,12 @@ def get_contract_report(
     all_contracts = db.execute(
         select(Contract).options(selectinload(Contract.lines)).order_by(Contract.vendor_name)
     ).scalars().all()
+
+    # Build account_number → AccountNumber lookup for deriving GL dimensions
+    acct_ref: dict[str, AccountNumber] = {
+        a.account_number: a
+        for a in db.execute(select(AccountNumber)).scalars().all()
+    }
 
     # Group contracts by (vendor, dept, account, PO) — same logic as ContractsPage
     groups: dict[tuple, list[Contract]] = {}
@@ -185,12 +192,16 @@ def get_contract_report(
         if fy_total == 0:
             continue
 
+        acct = acct_ref.get(contract.oracle_account_number)
         rows.append(ContractReportRow(
             id=contract.id,
             vendor_name=contract.vendor_name,
             oracle_department_name=contract.oracle_department_name,
             oracle_account_number=contract.oracle_account_number,
             oracle_account_sub_group=contract.oracle_account_sub_group,
+            account_group=acct.account_group if acct else "",
+            account_sub_group=acct.account_sub_group or contract.oracle_account_sub_group if acct else contract.oracle_account_sub_group,
+            cost_element=acct.cost_element if acct else "",
             purchase_order_number=contract.purchase_order_number,
             status=group_status,
             num_lines=len(sorted_lines),
@@ -227,6 +238,9 @@ def get_contract_report(
             "vendors": sorted({r.vendor_name for r in rows}),
             "departments": sorted({r.oracle_department_name for r in rows}),
             "statuses": sorted({r.status.value for r in rows}),
+            "account_groups": sorted({r.account_group for r in rows if r.account_group}),
+            "account_sub_groups": sorted({r.account_sub_group for r in rows if r.account_sub_group}),
+            "cost_elements": sorted({r.cost_element for r in rows if r.cost_element}),
         },
     )
 

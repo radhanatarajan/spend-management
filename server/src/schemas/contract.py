@@ -140,6 +140,9 @@ class ContractReportRow(BaseModel):
     oracle_department_name: str
     oracle_account_number: str
     oracle_account_sub_group: str
+    account_group: str
+    account_sub_group: str
+    cost_element: str
     purchase_order_number: str
     status: ContractStatus
     num_lines: int
