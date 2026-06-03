@@ -40,7 +40,7 @@ Before implementing:
 
 - "Fix the bug" → write a test that reproduces it, then make it pass.
 - "Add a feature" → state a brief plan with verify steps before coding.
-- All 144 backend tests must pass before any commit.
+- All backend tests must pass before any commit.
 
 ---
 
@@ -95,7 +95,9 @@ gh api repos/radhanatarajan/spend-management/commits/{sha}/check-runs --jq '.che
 | Password | spend_pass |
 | Schema | spend_management |
 
-**Tables:** `budget_entries`, `budget_entry_audit`, `budget_nc_config`, `budget_scenarios`, `contract_lines`, `contracts`, `spend`, `users`, `v_budget_entry_audit`
+**Tables:** `account_numbers`, `activity_ids`, `budget_entries`, `budget_entry_audit`, `budget_nc_config`, `budget_scenarios`, `contract_audit`, `contract_lines`, `contracts`, `departments`, `project_departments`, `project_ids`, `reference_audit`, `spend`, `users`
+
+**Views:** `v_budget_entry_audit`, `v_contract_audit`, `v_reference_audit_accounts`, `v_reference_audit_activities`, `v_reference_audit_departments`, `v_reference_audit_projects`, `v_spend_account_gaps`, `v_spend_activity_gaps`, `v_spend_department_gaps`
 
 Connect via Python:
 ```python
@@ -134,7 +136,7 @@ API interactive docs: `http://localhost:8000/docs`
 ## Running Tests
 
 ```bash
-# Backend (144 tests, all must pass before committing)
+# Backend (all must pass before committing)
 cd server && uv run pytest
 
 # Frontend
@@ -208,9 +210,23 @@ spend-management/
 
 ### Audit Design
 
-- `budget_entry_audit` uses `event_type` + `changes` JSON — only changed fields stored per event
-- `event_type` values: `AMOUNT_CHANGED`, `STATUS_CHANGED`
-- `changes` shape: `{"q1_amount": {"old": "0", "new": "150000"}}` or `{"status": {"old": "DRAFT", "new": "APPROVED"}}`
+**Rule: every writable table must have a corresponding audit table.** When adding a new domain table, add its audit table in the same PR.
+
+**Audit table pattern:**
+- Table name: `<domain>_audit` (e.g. `contract_audit`, `reference_audit`, `budget_entry_audit`)
+- Always include: `id` (PK), `event_type` (CREATED/UPDATED/DELETED), `changes` (JSON), `changed_by` (user email), `changed_at` (datetime, indexed)
+- Include denormalized identity columns so audit rows survive deletes (e.g. `vendor_name`, `purchase_order_number` on `contract_audit`; `table_name` + `record_id` on `reference_audit`)
+- `changes` shape: `{"field": {"old": "prev_val", "new": "new_val"}}` — only changed fields, serialized to strings via a `_serialize_val()` helper (handles `date`, `Decimal`, `enum`)
+- Write no audit row if the changes dict is empty (no-op update guard)
+- Audit rows are written in the same DB transaction as the data change
+- Create a corresponding MySQL view `v_<domain>_audit` with `JSON_EXTRACT` / `JSON_UNQUOTE` to unpack common changed fields into named columns
+
+**Auth requirement:** all write endpoints (POST/PUT/DELETE) that touch auditable tables must use `require_write` so `changed_by` can be captured from `current_user.email`.
+
+**Read endpoint:** expose `GET /api/<domain>/audit` (auth required, any role) filterable by primary identifier. Register this route before `/{id}` routes to avoid FastAPI path conflicts.
+
+**`budget_entry_audit` specifics** (predates the general pattern):
+- `event_type` values: `AMOUNT_CHANGED`, `STATUS_CHANGED` (not CREATED/UPDATED/DELETED)
 - MySQL view `v_budget_entry_audit` unpacks JSON into named columns for the Budget Change Log report
 
 ### Status State Machine (`budget_entries.status`)
@@ -247,7 +263,7 @@ Test credentials (seeded on first `make dev-api`):
 - `conftest.py` provides: `db`, `client`, `admin_client`, `bizadmin_client`, `serviceowner_client`, `readonly_client`
 - Helper factories: `make_scenario()`, `make_entry()`, `make_spend()`, `make_contract()`
 - Never mock the DB — tests run against real SQLite via `StaticPool`
-- All 144 tests must pass before pushing
+- All tests must pass before pushing
 
 ---
 
