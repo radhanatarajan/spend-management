@@ -473,8 +473,12 @@ def _migrate_contract_audit_table() -> None:
             )
         """))
         # Drop legacy discriminator columns added before contract_lines got its own table
-        conn.execute(text("ALTER TABLE contract_audit DROP COLUMN IF EXISTS entity"))
-        conn.execute(text("ALTER TABLE contract_audit DROP COLUMN IF EXISTS entity_id"))
+        row = conn.execute(text(
+            "SELECT COUNT(*) FROM information_schema.columns "
+            "WHERE table_schema = DATABASE() AND table_name = 'contract_audit' AND column_name = 'entity'"
+        )).scalar()
+        if row:
+            conn.execute(text("ALTER TABLE contract_audit DROP COLUMN entity, DROP COLUMN entity_id"))
         conn.commit()
 
 
