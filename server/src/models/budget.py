@@ -108,3 +108,27 @@ class BudgetEntryAudit(Base):
     changes: Mapped[dict] = mapped_column(JSON, nullable=False)
     changed_by: Mapped[str] = mapped_column(String(255), nullable=False)
     changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class BudgetScenarioAudit(Base):
+    __tablename__ = "budget_scenario_audit"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scenario_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    fiscal_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    scenario_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)  # CREATED, UPDATED, DELETED
+    changes: Mapped[dict] = mapped_column(JSON, nullable=False)
+    changed_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class BudgetNcConfigAudit(Base):
+    __tablename__ = "budget_nc_config_audit"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    fiscal_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)  # CREATED, UPDATED
+    changes: Mapped[dict] = mapped_column(JSON, nullable=False)
+    changed_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)

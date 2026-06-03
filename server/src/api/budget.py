@@ -5,12 +5,13 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select, func, distinct
 
 from src.core.dependencies import get_db, require_any, require_biz_admin, require_write, get_current_user
-from src.models.budget import BudgetScenario, BudgetEntry, BudgetNcConfig, BudgetEntryAudit
+from src.models.budget import BudgetScenario, BudgetEntry, BudgetNcConfig, BudgetEntryAudit, BudgetScenarioAudit, BudgetNcConfigAudit
 from src.models.spend import Spend
 from src.models.user import User
 from sqlalchemy import text as sa_text
 from src.schemas.budget import (
     BudgetScenarioCreate, BudgetScenarioUpdate, BudgetScenarioOut,
+    BudgetScenarioAuditOut, BudgetNcConfigAuditOut,
     BudgetEntryStatusUpdate, BudgetEntryAuditOut,
     BudgetEntryUpsert, BudgetEntryOut,
     BudgetNcConfigOut, BudgetNcConfigUpdate,
@@ -225,13 +226,45 @@ def update_nc_config(
             updated_by=current_user.email,
         )
         db.add(cfg)
+        db.commit()
+        db.refresh(cfg)
+        db.add(BudgetNcConfigAudit(
+            fiscal_year=body.fiscal_year,
+            event_type="CREATED",
+            changes={},
+            changed_by=current_user.email,
+        ))
     else:
+        changes = {}
+        if cfg.selected_cost_elements != body.selected_cost_elements:
+            changes["selected_cost_elements"] = {"old": cfg.selected_cost_elements, "new": body.selected_cost_elements}
+        if cfg.actuals_cutoff_month_key != body.actuals_cutoff_month_key:
+            changes["actuals_cutoff_month_key"] = {"old": cfg.actuals_cutoff_month_key, "new": body.actuals_cutoff_month_key}
         cfg.selected_cost_elements = body.selected_cost_elements
         cfg.actuals_cutoff_month_key = body.actuals_cutoff_month_key
         cfg.updated_by = current_user.email
+        if changes:
+            db.add(BudgetNcConfigAudit(
+                fiscal_year=body.fiscal_year,
+                event_type="UPDATED",
+                changes=changes,
+                changed_by=current_user.email,
+            ))
     db.commit()
     db.refresh(cfg)
     return cfg
+
+
+@router.get("/config/audit", response_model=list[BudgetNcConfigAuditOut])
+def get_nc_config_audit(
+    fiscal_year: int | None = Query(None),
+    db: Session = Depends(get_db),
+    _=Depends(require_any),
+):
+    stmt = select(BudgetNcConfigAudit).order_by(BudgetNcConfigAudit.changed_at.desc())
+    if fiscal_year is not None:
+        stmt = stmt.where(BudgetNcConfigAudit.fiscal_year == fiscal_year)
+    return db.execute(stmt.limit(500)).scalars().all()
 
 
 # ── Scenarios ─────────────────────────────────────────────────────────────────
@@ -288,9 +321,32 @@ def create_scenario(
                 created_by=current_user.email,
             ))
 
+    db.add(BudgetScenarioAudit(
+        scenario_id=scenario.id,
+        fiscal_year=scenario.fiscal_year,
+        scenario_name=scenario.name,
+        event_type="CREATED",
+        changes={},
+        changed_by=current_user.email,
+    ))
     db.commit()
     db.refresh(scenario)
     return scenario
+
+
+@router.get("/scenario-audit", response_model=list[BudgetScenarioAuditOut])
+def get_scenario_audit(
+    scenario_id: int | None = Query(None),
+    fiscal_year: int | None = Query(None),
+    db: Session = Depends(get_db),
+    _=Depends(require_any),
+):
+    stmt = select(BudgetScenarioAudit).order_by(BudgetScenarioAudit.changed_at.desc())
+    if scenario_id is not None:
+        stmt = stmt.where(BudgetScenarioAudit.scenario_id == scenario_id)
+    if fiscal_year is not None:
+        stmt = stmt.where(BudgetScenarioAudit.fiscal_year == fiscal_year)
+    return db.execute(stmt.limit(500)).scalars().all()
 
 
 @router.put("/scenarios/{scenario_id}", response_model=BudgetScenarioOut)
@@ -303,10 +359,23 @@ def update_scenario(
     scenario = db.get(BudgetScenario, scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
-    if body.name is not None:
-        scenario.name = body.name
-    if body.description is not None:
-        scenario.description = body.description
+    updates = body.model_dump(exclude_unset=True)
+    changes = {
+        f: {"old": getattr(scenario, f), "new": v}
+        for f, v in updates.items()
+        if getattr(scenario, f) != v
+    }
+    for f, v in updates.items():
+        setattr(scenario, f, v)
+    if changes:
+        db.add(BudgetScenarioAudit(
+            scenario_id=scenario.id,
+            fiscal_year=scenario.fiscal_year,
+            scenario_name=scenario.name,
+            event_type="UPDATED",
+            changes=changes,
+            changed_by=current_user.email,
+        ))
     db.commit()
     db.refresh(scenario)
     return scenario
@@ -316,13 +385,21 @@ def update_scenario(
 def delete_scenario(
     scenario_id: int,
     db: Session = Depends(get_db),
-    _: User = Depends(require_biz_admin),
+    current_user: User = Depends(require_biz_admin),
 ):
     scenario = db.get(BudgetScenario, scenario_id)
     if not scenario:
         raise HTTPException(status_code=404, detail="Scenario not found")
     if scenario.is_baseline:
         raise HTTPException(status_code=400, detail="Cannot delete the baseline scenario")
+    db.add(BudgetScenarioAudit(
+        scenario_id=scenario.id,
+        fiscal_year=scenario.fiscal_year,
+        scenario_name=scenario.name,
+        event_type="DELETED",
+        changes={},
+        changed_by=current_user.email,
+    ))
     db.delete(scenario)
     db.commit()
 

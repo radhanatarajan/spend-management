@@ -89,8 +89,21 @@ class ContractAudit(Base):
     contract_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     vendor_name: Mapped[str] = mapped_column(String(255), nullable=False)
     purchase_order_number: Mapped[str] = mapped_column(String(100), nullable=False)
-    entity: Mapped[str] = mapped_column(String(20), nullable=False)   # "contract" or "line"
-    entity_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)  # CREATED, UPDATED, DELETED
+    changes: Mapped[dict] = mapped_column(JSON, nullable=False)
+    changed_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class ContractLineAudit(Base):
+    __tablename__ = "contract_lines_audit"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    contract_line_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    contract_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    vendor_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    purchase_order_number: Mapped[str] = mapped_column(String(100), nullable=False)
+    po_line_number: Mapped[int] = mapped_column(Integer, nullable=False)
     event_type: Mapped[str] = mapped_column(String(20), nullable=False)  # CREATED, UPDATED, DELETED
     changes: Mapped[dict] = mapped_column(JSON, nullable=False)
     changed_by: Mapped[str] = mapped_column(String(255), nullable=False)

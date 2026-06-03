@@ -621,3 +621,122 @@ class TestCostElements:
         elements = resp.json()
         assert elements == sorted(set(elements))
         assert elements.count("Salaries") == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Budget Scenario Audit
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestBudgetScenarioAudit:
+    def _scenario_payload(self, **overrides):
+        base = dict(name="Test Scenario", fiscal_year=2027, budget_type="NON_CONTROLLABLE")
+        base.update(overrides)
+        return base
+
+    def test_create_scenario_logged(self, bizadmin_client):
+        r = bizadmin_client.post("/api/budget/scenarios", json=self._scenario_payload())
+        assert r.status_code == 201
+        scenario_id = r.json()["id"]
+
+        audit = bizadmin_client.get(f"/api/budget/scenario-audit?scenario_id={scenario_id}").json()
+        assert len(audit) == 1
+        assert audit[0]["event_type"] == "CREATED"
+        assert audit[0]["changes"] == {}
+        assert audit[0]["scenario_name"] == "Test Scenario"
+
+    def test_update_scenario_logged(self, bizadmin_client, db):
+        s = make_scenario(db, name="Old Name")
+        bizadmin_client.put(f"/api/budget/scenarios/{s.id}", json={"name": "New Name"})
+
+        audit = bizadmin_client.get(f"/api/budget/scenario-audit?scenario_id={s.id}").json()
+        assert len(audit) == 1
+        assert audit[0]["event_type"] == "UPDATED"
+        assert audit[0]["changes"]["name"]["old"] == "Old Name"
+        assert audit[0]["changes"]["name"]["new"] == "New Name"
+
+    def test_update_no_change_no_audit(self, bizadmin_client, db):
+        s = make_scenario(db, name="Same")
+        bizadmin_client.put(f"/api/budget/scenarios/{s.id}", json={"name": "Same"})
+        audit = bizadmin_client.get(f"/api/budget/scenario-audit?scenario_id={s.id}").json()
+        assert len(audit) == 0
+
+    def test_delete_scenario_logged(self, bizadmin_client, db):
+        s = make_scenario(db, name="To Delete", is_baseline=False)
+        scenario_id = s.id
+        r = bizadmin_client.delete(f"/api/budget/scenarios/{scenario_id}")
+        assert r.status_code == 204
+
+        audit = bizadmin_client.get(f"/api/budget/scenario-audit?scenario_id={scenario_id}").json()
+        assert len(audit) == 1
+        assert audit[0]["event_type"] == "DELETED"
+
+    def test_filter_by_fiscal_year(self, bizadmin_client):
+        bizadmin_client.post("/api/budget/scenarios", json=self._scenario_payload(fiscal_year=2027, name="S1"))
+        bizadmin_client.post("/api/budget/scenarios", json=self._scenario_payload(fiscal_year=2028, name="S2"))
+
+        audit = bizadmin_client.get("/api/budget/scenario-audit?fiscal_year=2027").json()
+        assert all(a["fiscal_year"] == 2027 for a in audit)
+
+    def test_audit_requires_auth(self, client):
+        r = client.get("/api/budget/scenario-audit")
+        assert r.status_code == 401
+
+    def test_readonly_can_view_audit(self, readonly_client, bizadmin_client):
+        bizadmin_client.post("/api/budget/scenarios", json=self._scenario_payload())
+        r = readonly_client.get("/api/budget/scenario-audit?fiscal_year=2027")
+        assert r.status_code == 200
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Budget NC Config Audit
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestBudgetNcConfigAudit:
+    def test_create_config_logged(self, bizadmin_client):
+        r = bizadmin_client.put("/api/budget/config", json={
+            "fiscal_year": 2027,
+            "selected_cost_elements": ["Salaries"],
+            "actuals_cutoff_month_key": None,
+        })
+        assert r.status_code == 200
+
+        audit = bizadmin_client.get("/api/budget/config/audit?fiscal_year=2027").json()
+        assert len(audit) == 1
+        assert audit[0]["event_type"] == "CREATED"
+        assert audit[0]["changes"] == {}
+
+    def test_update_config_logged(self, bizadmin_client):
+        bizadmin_client.put("/api/budget/config", json={
+            "fiscal_year": 2027, "selected_cost_elements": [], "actuals_cutoff_month_key": None,
+        })
+        bizadmin_client.put("/api/budget/config", json={
+            "fiscal_year": 2027, "selected_cost_elements": ["Travel"], "actuals_cutoff_month_key": 202606,
+        })
+
+        audit = bizadmin_client.get("/api/budget/config/audit?fiscal_year=2027").json()
+        assert len(audit) == 2
+        update = next(a for a in audit if a["event_type"] == "UPDATED")
+        assert update["changes"]["selected_cost_elements"]["old"] == []
+        assert update["changes"]["selected_cost_elements"]["new"] == ["Travel"]
+        assert update["changes"]["actuals_cutoff_month_key"]["new"] == 202606
+
+    def test_update_no_change_no_audit(self, bizadmin_client):
+        payload = {"fiscal_year": 2027, "selected_cost_elements": ["Salaries"], "actuals_cutoff_month_key": None}
+        bizadmin_client.put("/api/budget/config", json=payload)  # CREATED
+        bizadmin_client.put("/api/budget/config", json=payload)  # same values — no UPDATED row
+
+        audit = bizadmin_client.get("/api/budget/config/audit?fiscal_year=2027").json()
+        assert len(audit) == 1
+        assert audit[0]["event_type"] == "CREATED"
+
+    def test_audit_requires_auth(self, client):
+        r = client.get("/api/budget/config/audit")
+        assert r.status_code == 401
+
+    def test_readonly_can_view_audit(self, readonly_client, bizadmin_client):
+        bizadmin_client.put("/api/budget/config", json={
+            "fiscal_year": 2027, "selected_cost_elements": [], "actuals_cutoff_month_key": None,
+        })
+        r = readonly_client.get("/api/budget/config/audit?fiscal_year=2027")
+        assert r.status_code == 200
+        assert len(r.json()) == 1
