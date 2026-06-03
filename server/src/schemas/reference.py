@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -117,3 +119,16 @@ class ActivityIdOut(BaseModel):
             project_number=obj.project.project_number if obj.project else None,
             project_name=obj.project.project_name if obj.project else None,
         )
+
+
+# ── Reference Audit ───────────────────────────────────────────────────────────
+
+class ReferenceAuditOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    table_name: str
+    record_id: str
+    event_type: str
+    changes: dict
+    changed_by: str
+    changed_at: datetime

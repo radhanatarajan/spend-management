@@ -305,3 +305,103 @@ class TestActivities:
     def test_readonly_can_list(self, readonly_client):
         r = readonly_client.get("/api/activities")
         assert r.status_code == 200
+
+
+# ── Reference Audit tests ─────────────────────────────────────────────────────
+
+class TestReferenceAudit:
+    def test_department_audit_trail(self, admin_client):
+        admin_client.post("/api/departments", json={"department_code": "1100", "department_name": "Engineering"})
+        admin_client.put("/api/departments/1100", json={"department_name": "Eng Updated"})
+        admin_client.delete("/api/departments/1100")
+
+        r = admin_client.get("/api/reference/audit?table_name=departments&record_id=1100")
+        assert r.status_code == 200
+        rows = r.json()
+        assert len(rows) == 3
+        event_types = {row["event_type"] for row in rows}
+        assert event_types == {"CREATED", "UPDATED", "DELETED"}
+
+        updated = next(row for row in rows if row["event_type"] == "UPDATED")
+        assert updated["changes"]["department_name"]["old"] == "Engineering"
+        assert updated["changes"]["department_name"]["new"] == "Eng Updated"
+
+    def test_department_update_no_change_no_audit(self, admin_client):
+        admin_client.post("/api/departments", json={"department_code": "1100", "department_name": "Engineering"})
+        admin_client.put("/api/departments/1100", json={"department_name": "Engineering"})
+
+        r = admin_client.get("/api/reference/audit?table_name=departments&record_id=1100")
+        event_types = [row["event_type"] for row in r.json()]
+        assert "UPDATED" not in event_types
+
+    def test_account_audit_trail(self, admin_client):
+        r = admin_client.post("/api/accounts", json={"account_group": "R&D", "cost_element": "Licenses"})
+        acct = r.json()
+        admin_client.put(f"/api/accounts/{acct['id']}", json={"cost_element": "Hardware"})
+        admin_client.delete(f"/api/accounts/{acct['id']}")
+
+        r = admin_client.get(f"/api/reference/audit?table_name=account_numbers&record_id={acct['account_number']}")
+        assert r.status_code == 200
+        rows = r.json()
+        assert len(rows) == 3
+
+        updated = next(row for row in rows if row["event_type"] == "UPDATED")
+        assert updated["changes"]["cost_element"]["old"] == "Licenses"
+        assert updated["changes"]["cost_element"]["new"] == "Hardware"
+
+    def test_project_audit_trail(self, admin_client):
+        r = admin_client.post("/api/projects", json={"project_name": "CAPEX-TEST"})
+        proj = r.json()
+        admin_client.put(f"/api/projects/{proj['id']}", json={"project_name": "CAPEX-UPDATED"})
+        admin_client.delete(f"/api/projects/{proj['id']}")
+
+        r = admin_client.get(f"/api/reference/audit?table_name=project_ids&record_id={proj['project_number']}")
+        assert r.status_code == 200
+        rows = r.json()
+        assert len(rows) == 3
+
+        updated = next(row for row in rows if row["event_type"] == "UPDATED")
+        assert updated["changes"]["project_name"]["old"] == "CAPEX-TEST"
+        assert updated["changes"]["project_name"]["new"] == "CAPEX-UPDATED"
+
+    def test_project_department_change_audited(self, admin_client, db):
+        make_department(db, "1100", "Engineering")
+        make_department(db, "1200", "Sales")
+        r = admin_client.post("/api/projects", json={"project_name": "PROJ-X", "department_codes": ["1100"]})
+        proj = r.json()
+        admin_client.put(f"/api/projects/{proj['id']}", json={"department_codes": ["1100", "1200"]})
+
+        r = admin_client.get(f"/api/reference/audit?table_name=project_ids&record_id={proj['project_number']}")
+        rows = r.json()
+        updated = next(row for row in rows if row["event_type"] == "UPDATED")
+        assert updated["changes"]["department_codes"]["old"] == ["1100"]
+        assert updated["changes"]["department_codes"]["new"] == ["1100", "1200"]
+
+    def test_activity_audit_trail(self, admin_client):
+        admin_client.post("/api/activities", json={"activity_id": "ACT-001"})
+        admin_client.put("/api/activities/ACT-001", json={"activity_id_desc": "Updated desc"})
+        admin_client.delete("/api/activities/ACT-001")
+
+        r = admin_client.get("/api/reference/audit?table_name=activity_ids&record_id=ACT-001")
+        assert r.status_code == 200
+        rows = r.json()
+        assert len(rows) == 3
+
+        updated = next(row for row in rows if row["event_type"] == "UPDATED")
+        assert updated["changes"]["activity_id_desc"]["new"] == "Updated desc"
+
+    def test_filter_by_table_name(self, admin_client):
+        admin_client.post("/api/departments", json={"department_code": "1100", "department_name": "Eng"})
+        admin_client.post("/api/accounts", json={"account_group": "R&D", "cost_element": "Licenses"})
+
+        r = admin_client.get("/api/reference/audit?table_name=departments")
+        assert r.status_code == 200
+        assert all(row["table_name"] == "departments" for row in r.json())
+
+    def test_audit_requires_auth(self, client):
+        r = client.get("/api/reference/audit")
+        assert r.status_code == 401
+
+    def test_readonly_can_view_audit(self, readonly_client):
+        r = readonly_client.get("/api/reference/audit")
+        assert r.status_code == 200

@@ -100,6 +100,8 @@ def init_db() -> None:
     _migrate_spend_account_gaps_view()
     _migrate_spend_department_gaps_view()
     _migrate_spend_activity_gaps_view()
+    _migrate_reference_audit_table()
+    _migrate_reference_audit_views()
     _seed_db()
     _seed_users()
     _seed_contracts()
@@ -323,6 +325,125 @@ def _migrate_spend_activity_gaps_view() -> None:
                 s.oracle_department_name,
                 s.oracle_account_group
             ORDER BY s.activity_id
+        """))
+        conn.commit()
+
+
+def _migrate_reference_audit_table() -> None:
+    """Create reference_audit table if it doesn't exist (idempotent)."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS reference_audit (
+                id          INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                table_name  VARCHAR(50)  NOT NULL,
+                record_id   VARCHAR(100) NOT NULL,
+                event_type  VARCHAR(20)  NOT NULL,
+                changes     JSON         NOT NULL,
+                changed_by  VARCHAR(255) NOT NULL,
+                changed_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_ref_audit_table (table_name),
+                INDEX idx_ref_audit_record (table_name, record_id),
+                INDEX idx_ref_audit_at (changed_at)
+            )
+        """))
+        conn.commit()
+
+
+def _migrate_reference_audit_views() -> None:
+    """Create or replace the four per-entity reference audit views."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW v_reference_audit_departments AS
+            SELECT
+                ra.id                                                                   AS audit_id,
+                ra.record_id                                                            AS department_code,
+                d.department_name                                                       AS current_department_name,
+                ra.event_type,
+                ra.changed_by,
+                ra.changed_at,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.department_name.old'))         AS department_name_old,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.department_name.new'))         AS department_name_new
+            FROM reference_audit ra
+            LEFT JOIN departments d ON d.department_code = ra.record_id
+            WHERE ra.table_name = 'departments'
+            ORDER BY ra.changed_at DESC
+        """))
+
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW v_reference_audit_accounts AS
+            SELECT
+                ra.id                                                                   AS audit_id,
+                ra.record_id                                                            AS account_number,
+                an.account_group                                                        AS current_account_group,
+                an.account_sub_group                                                    AS current_account_sub_group,
+                an.account_desc                                                         AS current_account_desc,
+                an.cost_element                                                         AS current_cost_element,
+                ra.event_type,
+                ra.changed_by,
+                ra.changed_at,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.account_desc.old'))            AS account_desc_old,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.account_desc.new'))            AS account_desc_new,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.account_group.old'))           AS account_group_old,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.account_group.new'))           AS account_group_new,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.account_sub_group.old'))       AS account_sub_group_old,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.account_sub_group.new'))       AS account_sub_group_new,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.cost_element.old'))            AS cost_element_old,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.cost_element.new'))            AS cost_element_new
+            FROM reference_audit ra
+            LEFT JOIN account_numbers an ON an.account_number = ra.record_id
+            WHERE ra.table_name = 'account_numbers'
+            ORDER BY ra.changed_at DESC
+        """))
+
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW v_reference_audit_projects AS
+            SELECT
+                ra.id                                                                   AS audit_id,
+                ra.record_id                                                            AS project_number,
+                p.project_name                                                          AS current_project_name,
+                ra.event_type,
+                ra.changed_by,
+                ra.changed_at,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.project_name.old'))            AS project_name_old,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.project_name.new'))            AS project_name_new,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.department_codes.old'))        AS department_codes_old,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.department_codes.new'))        AS department_codes_new
+            FROM reference_audit ra
+            LEFT JOIN project_ids p ON p.project_number = ra.record_id
+            WHERE ra.table_name = 'project_ids'
+            ORDER BY ra.changed_at DESC
+        """))
+
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW v_reference_audit_activities AS
+            SELECT
+                ra.id                                                                   AS audit_id,
+                ra.record_id                                                            AS activity_id,
+                ai.activity_id_desc                                                     AS current_activity_id_desc,
+                ai.department_code                                                      AS current_department_code,
+                d.department_name                                                       AS current_department_name,
+                an.account_number                                                       AS current_account_number,
+                an.cost_element                                                         AS current_cost_element,
+                p.project_number                                                        AS current_project_number,
+                p.project_name                                                          AS current_project_name,
+                ra.event_type,
+                ra.changed_by,
+                ra.changed_at,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.activity_id_desc.old'))        AS activity_id_desc_old,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.activity_id_desc.new'))        AS activity_id_desc_new,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.department_code.old'))         AS department_code_old,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.department_code.new'))         AS department_code_new,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.account_id.old'))              AS account_id_old,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.account_id.new'))              AS account_id_new,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.project_id.old'))              AS project_id_old,
+                JSON_UNQUOTE(JSON_EXTRACT(ra.changes, '$.project_id.new'))              AS project_id_new
+            FROM reference_audit ra
+            LEFT JOIN activity_ids ai  ON ai.activity_id       = ra.record_id
+            LEFT JOIN departments d    ON d.department_code    = ai.department_code
+            LEFT JOIN account_numbers an ON an.id              = ai.account_id
+            LEFT JOIN project_ids p    ON p.id                 = ai.project_id
+            WHERE ra.table_name = 'activity_ids'
+            ORDER BY ra.changed_at DESC
         """))
         conn.commit()
 

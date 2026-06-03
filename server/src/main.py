@@ -8,6 +8,7 @@ from src.api.budget import router as budget_router
 from src.api.contracts import router as contracts_router
 from src.api.departments import router as departments_router
 from src.api.projects import router as projects_router
+from src.api.reference_audit import router as reference_audit_router
 from src.api.spend import router as spend_router
 from src.db.init_db import init_db
 
@@ -35,6 +36,7 @@ app.include_router(departments_router)
 app.include_router(accounts_router)
 app.include_router(projects_router)
 app.include_router(activities_router)
+app.include_router(reference_audit_router)
 
 
 @app.get("/")
