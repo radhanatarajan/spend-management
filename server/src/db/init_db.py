@@ -104,6 +104,8 @@ def init_db() -> None:
     _migrate_reference_audit_views()
     _migrate_contract_audit_table()
     _migrate_contract_audit_view()
+    _migrate_budget_scenario_audit_table()
+    _migrate_budget_nc_config_audit_table()
     _seed_db()
     _seed_users()
     _seed_contracts()
@@ -501,6 +503,74 @@ def _migrate_contract_audit_view() -> None:
                 ca.changed_at
             FROM contract_audit ca
             LEFT JOIN contracts c ON c.id = ca.contract_id
+        """))
+        conn.commit()
+
+
+def _migrate_budget_scenario_audit_table() -> None:
+    """Create budget_scenario_audit table and view if they don't exist (idempotent)."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS budget_scenario_audit (
+                id            INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                scenario_id   INT          NOT NULL,
+                fiscal_year   INT          NOT NULL,
+                scenario_name VARCHAR(100) NOT NULL,
+                event_type    VARCHAR(20)  NOT NULL,
+                changes       JSON         NOT NULL,
+                changed_by    VARCHAR(255) NOT NULL,
+                changed_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_bsa_scenario (scenario_id),
+                INDEX idx_bsa_fy (fiscal_year),
+                INDEX idx_bsa_at (changed_at)
+            )
+        """))
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW v_budget_scenario_audit AS
+            SELECT
+                bsa.id,
+                bsa.scenario_id,
+                bsa.fiscal_year,
+                bsa.scenario_name,
+                bsa.event_type,
+                JSON_UNQUOTE(JSON_EXTRACT(bsa.changes, '$.name.old'))        AS name_old,
+                JSON_UNQUOTE(JSON_EXTRACT(bsa.changes, '$.name.new'))        AS name_new,
+                JSON_UNQUOTE(JSON_EXTRACT(bsa.changes, '$.description.old')) AS description_old,
+                JSON_UNQUOTE(JSON_EXTRACT(bsa.changes, '$.description.new')) AS description_new,
+                bsa.changed_by,
+                bsa.changed_at
+            FROM budget_scenario_audit bsa
+            LEFT JOIN budget_scenarios bs ON bs.id = bsa.scenario_id
+        """))
+        conn.commit()
+
+
+def _migrate_budget_nc_config_audit_table() -> None:
+    """Create budget_nc_config_audit table and view if they don't exist (idempotent)."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS budget_nc_config_audit (
+                id          INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                fiscal_year INT          NOT NULL,
+                event_type  VARCHAR(20)  NOT NULL,
+                changes     JSON         NOT NULL,
+                changed_by  VARCHAR(255) NOT NULL,
+                changed_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_bnca_fy (fiscal_year),
+                INDEX idx_bnca_at (changed_at)
+            )
+        """))
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW v_budget_nc_config_audit AS
+            SELECT
+                id,
+                fiscal_year,
+                event_type,
+                JSON_UNQUOTE(JSON_EXTRACT(changes, '$.actuals_cutoff_month_key.old')) AS cutoff_old,
+                JSON_UNQUOTE(JSON_EXTRACT(changes, '$.actuals_cutoff_month_key.new')) AS cutoff_new,
+                changed_by,
+                changed_at
+            FROM budget_nc_config_audit
         """))
         conn.commit()
 

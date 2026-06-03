@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class QuarterlyAmounts(BaseModel):
@@ -56,6 +56,30 @@ class BudgetEntryAuditOut(BaseModel):
     changed_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class BudgetScenarioAuditOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scenario_id: int
+    fiscal_year: int
+    scenario_name: str
+    event_type: str
+    changes: dict
+    changed_by: str
+    changed_at: datetime
+
+
+class BudgetNcConfigAuditOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    fiscal_year: int
+    event_type: str
+    changes: dict
+    changed_by: str
+    changed_at: datetime
 
 
 class BudgetEntryUpsert(BaseModel):
