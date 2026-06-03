@@ -625,7 +625,6 @@ class TestContractAudit:
         audit = admin_client.get(f"/api/contracts/audit?contract_id={contract_id}").json()
         assert len(audit) == 1
         assert audit[0]["event_type"] == "CREATED"
-        assert audit[0]["entity"] == "contract"
         assert audit[0]["changes"] == {}
 
     def test_update_contract_logged(self, admin_client, db):
@@ -653,52 +652,6 @@ class TestContractAudit:
         audit = admin_client.get(f"/api/contracts/audit?contract_id={contract_id}").json()
         assert len(audit) == 1
         assert audit[0]["event_type"] == "DELETED"
-        assert audit[0]["entity"] == "contract"
-
-    def test_add_line_logged(self, admin_client, db):
-        c = make_contract(db)
-        line_payload = dict(
-            po_line_number=1, period_start="2026-01-01", period_end="2026-12-31",
-            billing_interval="monthly", entered_amount="1000.00",
-        )
-        r = admin_client.post(f"/api/contracts/{c.id}/lines", json=line_payload)
-        assert r.status_code == 201
-
-        audit = admin_client.get(f"/api/contracts/audit?contract_id={c.id}").json()
-        assert len(audit) == 1
-        assert audit[0]["event_type"] == "CREATED"
-        assert audit[0]["entity"] == "line"
-
-    def test_update_line_logged(self, admin_client, db):
-        c = make_contract(db, lines=[LINE_Y1])
-        line_id = admin_client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
-        admin_client.put(f"/api/contracts/{c.id}/lines/{line_id}",
-                         json={"entered_amount": "2000.00", "billing_interval": "monthly"})
-
-        audit = admin_client.get(f"/api/contracts/audit?contract_id={c.id}").json()
-        assert len(audit) == 1
-        assert audit[0]["event_type"] == "UPDATED"
-        assert audit[0]["changes"]["entered_amount"]["old"] == "1000.00"
-        assert audit[0]["changes"]["entered_amount"]["new"] == "2000.00"
-
-    def test_update_line_no_change_no_audit(self, admin_client, db):
-        c = make_contract(db, lines=[LINE_Y1])
-        line_id = admin_client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
-        # Send same values as already stored
-        admin_client.put(f"/api/contracts/{c.id}/lines/{line_id}",
-                         json={"billing_interval": "monthly"})
-        audit = admin_client.get(f"/api/contracts/audit?contract_id={c.id}").json()
-        assert len(audit) == 0
-
-    def test_delete_line_logged(self, admin_client, db):
-        c = make_contract(db, lines=[LINE_Y1])
-        line_id = admin_client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
-        admin_client.delete(f"/api/contracts/{c.id}/lines/{line_id}")
-
-        audit = admin_client.get(f"/api/contracts/audit?contract_id={c.id}").json()
-        assert len(audit) == 1
-        assert audit[0]["event_type"] == "DELETED"
-        assert audit[0]["entity"] == "line"
 
     def test_audit_filter_by_vendor(self, admin_client, db):
         c1 = make_contract(db, vendor="Acme", po="PO-A")
@@ -720,3 +673,73 @@ class TestContractAudit:
         r = readonly_client.get(f"/api/contracts/audit?contract_id={c.id}")
         assert r.status_code == 200
         assert len(r.json()) == 1
+
+    # ── Contract line audit ────────────────────────────────────────────────────
+
+    def test_add_line_logged(self, admin_client, db):
+        c = make_contract(db)
+        line_payload = dict(
+            po_line_number=1, period_start="2026-01-01", period_end="2026-12-31",
+            billing_interval="monthly", entered_amount="1000.00",
+        )
+        r = admin_client.post(f"/api/contracts/{c.id}/lines", json=line_payload)
+        assert r.status_code == 201
+
+        audit = admin_client.get(f"/api/contracts/lines/audit?contract_id={c.id}").json()
+        assert len(audit) == 1
+        assert audit[0]["event_type"] == "CREATED"
+        assert audit[0]["po_line_number"] == 1
+
+    def test_update_line_logged(self, admin_client, db):
+        c = make_contract(db, lines=[LINE_Y1])
+        line_id = admin_client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        admin_client.put(f"/api/contracts/{c.id}/lines/{line_id}",
+                         json={"entered_amount": "2000.00", "billing_interval": "monthly"})
+
+        audit = admin_client.get(f"/api/contracts/lines/audit?contract_id={c.id}").json()
+        assert len(audit) == 1
+        assert audit[0]["event_type"] == "UPDATED"
+        assert audit[0]["changes"]["entered_amount"]["old"] == "1000.00"
+        assert audit[0]["changes"]["entered_amount"]["new"] == "2000.00"
+
+    def test_update_line_no_change_no_audit(self, admin_client, db):
+        c = make_contract(db, lines=[LINE_Y1])
+        line_id = admin_client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        admin_client.put(f"/api/contracts/{c.id}/lines/{line_id}",
+                         json={"billing_interval": "monthly"})
+        audit = admin_client.get(f"/api/contracts/lines/audit?contract_id={c.id}").json()
+        assert len(audit) == 0
+
+    def test_delete_line_logged(self, admin_client, db):
+        c = make_contract(db, lines=[LINE_Y1])
+        line_id = admin_client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        admin_client.delete(f"/api/contracts/{c.id}/lines/{line_id}")
+
+        audit = admin_client.get(f"/api/contracts/lines/audit?contract_id={c.id}").json()
+        assert len(audit) == 1
+        assert audit[0]["event_type"] == "DELETED"
+
+    def test_lines_audit_filter_by_line_id(self, admin_client, db):
+        c = make_contract(db, lines=[LINE_Y1, LINE_Y2])
+        lines = admin_client.get(f"/api/contracts/{c.id}").json()["lines"]
+        line_id = lines[0]["id"]
+        admin_client.put(f"/api/contracts/{c.id}/lines/{line_id}",
+                         json={"entered_amount": "1500.00", "billing_interval": "monthly"})
+        admin_client.put(f"/api/contracts/{c.id}/lines/{lines[1]['id']}",
+                         json={"entered_amount": "1600.00", "billing_interval": "monthly"})
+
+        audit = admin_client.get(f"/api/contracts/lines/audit?contract_line_id={line_id}").json()
+        assert len(audit) == 1
+        assert audit[0]["changes"]["entered_amount"]["new"] == "1500.00"
+
+    def test_lines_audit_requires_auth(self, client):
+        assert client.get("/api/contracts/lines/audit").status_code == 401
+
+    def test_contract_audit_has_no_line_events(self, admin_client, db):
+        c = make_contract(db)
+        admin_client.post(f"/api/contracts/{c.id}/lines", json=dict(
+            po_line_number=1, period_start="2026-01-01", period_end="2026-12-31",
+            billing_interval="monthly", entered_amount="500.00",
+        ))
+        # contract_audit should be empty — line event went to contract_lines_audit
+        assert admin_client.get(f"/api/contracts/audit?contract_id={c.id}").json() == []

@@ -104,6 +104,7 @@ def init_db() -> None:
     _migrate_reference_audit_views()
     _migrate_contract_audit_table()
     _migrate_contract_audit_view()
+    _migrate_contract_lines_audit_table()
     _migrate_budget_scenario_audit_table()
     _migrate_budget_nc_config_audit_table()
     _seed_db()
@@ -455,7 +456,7 @@ def _migrate_reference_audit_views() -> None:
 
 
 def _migrate_contract_audit_table() -> None:
-    """Create contract_audit table if it doesn't exist (idempotent)."""
+    """Create contract_audit table (contract-level events only) and clean up legacy columns."""
     with engine.connect() as conn:
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS contract_audit (
@@ -463,8 +464,6 @@ def _migrate_contract_audit_table() -> None:
                 contract_id           INT          NOT NULL,
                 vendor_name           VARCHAR(255) NOT NULL,
                 purchase_order_number VARCHAR(100) NOT NULL,
-                entity                VARCHAR(20)  NOT NULL,
-                entity_id             INT          NOT NULL,
                 event_type            VARCHAR(20)  NOT NULL,
                 changes               JSON         NOT NULL,
                 changed_by            VARCHAR(255) NOT NULL,
@@ -473,11 +472,14 @@ def _migrate_contract_audit_table() -> None:
                 INDEX idx_contract_audit_at (changed_at)
             )
         """))
+        # Drop legacy discriminator columns added before contract_lines got its own table
+        conn.execute(text("ALTER TABLE contract_audit DROP COLUMN IF EXISTS entity"))
+        conn.execute(text("ALTER TABLE contract_audit DROP COLUMN IF EXISTS entity_id"))
         conn.commit()
 
 
 def _migrate_contract_audit_view() -> None:
-    """Create or replace the contract audit view with JSON-unpacked change columns."""
+    """Create or replace the contract-level audit view."""
     with engine.connect() as conn:
         conn.execute(text("""
             CREATE OR REPLACE VIEW v_contract_audit AS
@@ -486,23 +488,59 @@ def _migrate_contract_audit_view() -> None:
                 ca.contract_id,
                 ca.vendor_name,
                 ca.purchase_order_number,
-                ca.entity,
-                ca.entity_id,
                 ca.event_type,
                 JSON_UNQUOTE(JSON_EXTRACT(ca.changes, '$.status.old'))            AS status_old,
                 JSON_UNQUOTE(JSON_EXTRACT(ca.changes, '$.status.new'))            AS status_new,
-                JSON_UNQUOTE(JSON_EXTRACT(ca.changes, '$.period_start.old'))      AS period_start_old,
-                JSON_UNQUOTE(JSON_EXTRACT(ca.changes, '$.period_start.new'))      AS period_start_new,
-                JSON_UNQUOTE(JSON_EXTRACT(ca.changes, '$.period_end.old'))        AS period_end_old,
-                JSON_UNQUOTE(JSON_EXTRACT(ca.changes, '$.period_end.new'))        AS period_end_new,
-                JSON_UNQUOTE(JSON_EXTRACT(ca.changes, '$.entered_amount.old'))    AS entered_amount_old,
-                JSON_UNQUOTE(JSON_EXTRACT(ca.changes, '$.entered_amount.new'))    AS entered_amount_new,
-                JSON_UNQUOTE(JSON_EXTRACT(ca.changes, '$.billing_interval.old'))  AS billing_interval_old,
-                JSON_UNQUOTE(JSON_EXTRACT(ca.changes, '$.billing_interval.new'))  AS billing_interval_new,
                 ca.changed_by,
                 ca.changed_at
             FROM contract_audit ca
             LEFT JOIN contracts c ON c.id = ca.contract_id
+        """))
+        conn.commit()
+
+
+def _migrate_contract_lines_audit_table() -> None:
+    """Create contract_lines_audit table and view (idempotent)."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS contract_lines_audit (
+                id                    INT          NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                contract_line_id      INT          NOT NULL,
+                contract_id           INT          NOT NULL,
+                vendor_name           VARCHAR(255) NOT NULL,
+                purchase_order_number VARCHAR(100) NOT NULL,
+                po_line_number        INT          NOT NULL,
+                event_type            VARCHAR(20)  NOT NULL,
+                changes               JSON         NOT NULL,
+                changed_by            VARCHAR(255) NOT NULL,
+                changed_at            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_cl_audit_line (contract_line_id),
+                INDEX idx_cl_audit_contract (contract_id),
+                INDEX idx_cl_audit_at (changed_at)
+            )
+        """))
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW v_contract_lines_audit AS
+            SELECT
+                cla.id,
+                cla.contract_line_id,
+                cla.contract_id,
+                cla.vendor_name,
+                cla.purchase_order_number,
+                cla.po_line_number,
+                cla.event_type,
+                JSON_UNQUOTE(JSON_EXTRACT(cla.changes, '$.period_start.old'))     AS period_start_old,
+                JSON_UNQUOTE(JSON_EXTRACT(cla.changes, '$.period_start.new'))     AS period_start_new,
+                JSON_UNQUOTE(JSON_EXTRACT(cla.changes, '$.period_end.old'))       AS period_end_old,
+                JSON_UNQUOTE(JSON_EXTRACT(cla.changes, '$.period_end.new'))       AS period_end_new,
+                JSON_UNQUOTE(JSON_EXTRACT(cla.changes, '$.entered_amount.old'))   AS entered_amount_old,
+                JSON_UNQUOTE(JSON_EXTRACT(cla.changes, '$.entered_amount.new'))   AS entered_amount_new,
+                JSON_UNQUOTE(JSON_EXTRACT(cla.changes, '$.billing_interval.old')) AS billing_interval_old,
+                JSON_UNQUOTE(JSON_EXTRACT(cla.changes, '$.billing_interval.new')) AS billing_interval_new,
+                cla.changed_by,
+                cla.changed_at
+            FROM contract_lines_audit cla
+            LEFT JOIN contract_lines cl ON cl.id = cla.contract_line_id
         """))
         conn.commit()
 

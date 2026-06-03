@@ -171,8 +171,21 @@ class ContractAuditOut(BaseModel):
     contract_id: int
     vendor_name: str
     purchase_order_number: str
-    entity: str
-    entity_id: int
+    event_type: str
+    changes: dict
+    changed_by: str
+    changed_at: datetime
+
+
+class ContractLineAuditOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    contract_line_id: int
+    contract_id: int
+    vendor_name: str
+    purchase_order_number: str
+    po_line_number: int
     event_type: str
     changes: dict
     changed_by: str

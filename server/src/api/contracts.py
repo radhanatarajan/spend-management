@@ -7,13 +7,13 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select
 
 from src.core.dependencies import get_db, require_write, require_any
-from src.models.contract import Contract, ContractLine, ContractAudit, BillingInterval, ContractStatus
+from src.models.contract import Contract, ContractLine, ContractAudit, ContractLineAudit, BillingInterval, ContractStatus
 from src.models.user import User
 from src.schemas.contract import (
     ContractCreate, ContractUpdate, ContractOut,
     ContractLineCreate, ContractLineUpdate, ContractLineOut,
     ContractReportOut, ContractReportRow,
-    ContractAuditOut,
+    ContractAuditOut, ContractLineAuditOut,
     compute_monthly_amount,
     month_to_fy, fiscal_year_months, month_label,
 )
@@ -248,6 +248,21 @@ def get_contract_audit(
     return db.execute(stmt.limit(500)).scalars().all()
 
 
+@router.get("/lines/audit", response_model=list[ContractLineAuditOut])
+def get_contract_lines_audit(
+    contract_id: int | None = Query(None, description="Filter by contract ID"),
+    contract_line_id: int | None = Query(None, description="Filter by line ID"),
+    db: Session = Depends(get_db),
+    _=Depends(require_any),
+):
+    stmt = select(ContractLineAudit).order_by(ContractLineAudit.changed_at.desc())
+    if contract_id is not None:
+        stmt = stmt.where(ContractLineAudit.contract_id == contract_id)
+    if contract_line_id is not None:
+        stmt = stmt.where(ContractLineAudit.contract_line_id == contract_line_id)
+    return db.execute(stmt.limit(500)).scalars().all()
+
+
 # ── Contract CRUD ─────────────────────────────────────────────────────────────
 
 @router.get("", response_model=list[ContractOut])
@@ -285,8 +300,6 @@ def create_contract(
         contract_id=contract.id,
         vendor_name=contract.vendor_name,
         purchase_order_number=contract.purchase_order_number,
-        entity="contract",
-        entity_id=contract.id,
         event_type="CREATED",
         changes={},
         changed_by=current_user.email,
@@ -321,8 +334,6 @@ def update_contract(
             contract_id=contract.id,
             vendor_name=contract.vendor_name,
             purchase_order_number=contract.purchase_order_number,
-            entity="contract",
-            entity_id=contract.id,
             event_type="UPDATED",
             changes=changes,
             changed_by=current_user.email,
@@ -342,8 +353,6 @@ def delete_contract(
         contract_id=contract.id,
         vendor_name=contract.vendor_name,
         purchase_order_number=contract.purchase_order_number,
-        entity="contract",
-        entity_id=contract.id,
         event_type="DELETED",
         changes={},
         changed_by=current_user.email,
@@ -367,12 +376,12 @@ def add_line(
     db.add(line)
     db.commit()
     db.refresh(line)
-    db.add(ContractAudit(
+    db.add(ContractLineAudit(
+        contract_line_id=line.id,
         contract_id=contract.id,
         vendor_name=contract.vendor_name,
         purchase_order_number=contract.purchase_order_number,
-        entity="line",
-        entity_id=line.id,
+        po_line_number=line.po_line_number,
         event_type="CREATED",
         changes={},
         changed_by=current_user.email,
@@ -405,12 +414,12 @@ def update_line(
         setattr(line, field, value)
     _resolve_monthly(line)
     if changes:
-        db.add(ContractAudit(
+        db.add(ContractLineAudit(
+            contract_line_id=line.id,
             contract_id=contract_id,
             vendor_name=contract.vendor_name,
             purchase_order_number=contract.purchase_order_number,
-            entity="line",
-            entity_id=line.id,
+            po_line_number=line.po_line_number,
             event_type="UPDATED",
             changes=changes,
             changed_by=current_user.email,
@@ -433,12 +442,12 @@ def delete_line(
     if not line:
         raise HTTPException(status_code=404, detail="Contract line not found")
     contract = _get_contract_or_404(contract_id, db)
-    db.add(ContractAudit(
+    db.add(ContractLineAudit(
+        contract_line_id=line.id,
         contract_id=contract_id,
         vendor_name=contract.vendor_name,
         purchase_order_number=contract.purchase_order_number,
-        entity="line",
-        entity_id=line.id,
+        po_line_number=line.po_line_number,
         event_type="DELETED",
         changes={},
         changed_by=current_user.email,
