@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, computed_field
+from pydantic import BaseModel, ConfigDict, computed_field
 
 from src.models.contract import ContractStatus, BillingInterval
 
@@ -162,3 +162,18 @@ class ContractReportOut(BaseModel):
     grand_total: Decimal
     available_fiscal_years: list[int]
     filter_options: dict        # {"vendors": [...], "departments": [...], "statuses": [...]}
+
+
+class ContractAuditOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    contract_id: int
+    vendor_name: str
+    purchase_order_number: str
+    entity: str
+    entity_id: int
+    event_type: str
+    changes: dict
+    changed_by: str
+    changed_at: datetime

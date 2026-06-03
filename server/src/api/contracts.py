@@ -1,15 +1,19 @@
+import enum
+from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select
 
-from src.core.dependencies import get_db
-from src.models.contract import Contract, ContractLine, BillingInterval, ContractStatus
+from src.core.dependencies import get_db, require_write, require_any
+from src.models.contract import Contract, ContractLine, ContractAudit, BillingInterval, ContractStatus
+from src.models.user import User
 from src.schemas.contract import (
     ContractCreate, ContractUpdate, ContractOut,
     ContractLineCreate, ContractLineUpdate, ContractLineOut,
     ContractReportOut, ContractReportRow,
+    ContractAuditOut,
     compute_monthly_amount,
     month_to_fy, fiscal_year_months, month_label,
 )
@@ -33,6 +37,19 @@ def _resolve_monthly(line: ContractLine) -> None:
     line.monthly_amount = compute_monthly_amount(
         line.entered_amount, line.billing_interval, line.period_start, line.period_end
     )
+
+
+def _serialize_val(v):
+    """Convert date/Decimal/enum to a JSON-safe string; pass through everything else."""
+    if v is None:
+        return None
+    if isinstance(v, date):
+        return str(v)
+    if isinstance(v, Decimal):
+        return str(v)
+    if isinstance(v, enum.Enum):
+        return v.value
+    return v
 
 
 def _group_key(contract: Contract) -> tuple:
@@ -214,6 +231,23 @@ def get_contract_report(
     )
 
 
+# ── Audit log ────────────────────────────────────────────────────────────────
+
+@router.get("/audit", response_model=list[ContractAuditOut])
+def get_contract_audit(
+    contract_id: int | None = Query(None, description="Filter by contract ID"),
+    vendor_name: str | None = Query(None, description="Filter by vendor name"),
+    db: Session = Depends(get_db),
+    _=Depends(require_any),
+):
+    stmt = select(ContractAudit).order_by(ContractAudit.changed_at.desc())
+    if contract_id is not None:
+        stmt = stmt.where(ContractAudit.contract_id == contract_id)
+    if vendor_name:
+        stmt = stmt.where(ContractAudit.vendor_name == vendor_name)
+    return db.execute(stmt.limit(500)).scalars().all()
+
+
 # ── Contract CRUD ─────────────────────────────────────────────────────────────
 
 @router.get("", response_model=list[ContractOut])
@@ -225,7 +259,11 @@ def list_contracts(db: Session = Depends(get_db)):
 
 
 @router.post("", response_model=ContractOut, status_code=status.HTTP_201_CREATED)
-def create_contract(body: ContractCreate, db: Session = Depends(get_db)):
+def create_contract(
+    body: ContractCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_write),
+):
     contract = Contract(
         vendor_name=body.vendor_name,
         description=body.description,
@@ -243,6 +281,17 @@ def create_contract(body: ContractCreate, db: Session = Depends(get_db)):
     db.add(contract)
     db.commit()
     db.refresh(contract)
+    db.add(ContractAudit(
+        contract_id=contract.id,
+        vendor_name=contract.vendor_name,
+        purchase_order_number=contract.purchase_order_number,
+        entity="contract",
+        entity_id=contract.id,
+        event_type="CREATED",
+        changes={},
+        changed_by=current_user.email,
+    ))
+    db.commit()
     return _get_contract_or_404(contract.id, db)
 
 
@@ -252,17 +301,53 @@ def get_contract(contract_id: int, db: Session = Depends(get_db)):
 
 
 @router.put("/{contract_id}", response_model=ContractOut)
-def update_contract(contract_id: int, body: ContractUpdate, db: Session = Depends(get_db)):
+def update_contract(
+    contract_id: int,
+    body: ContractUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_write),
+):
     contract = _get_contract_or_404(contract_id, db)
-    for field, value in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    changes = {
+        f: {"old": _serialize_val(getattr(contract, f)), "new": _serialize_val(v)}
+        for f, v in updates.items()
+        if _serialize_val(getattr(contract, f)) != _serialize_val(v)
+    }
+    for field, value in updates.items():
         setattr(contract, field, value)
+    if changes:
+        db.add(ContractAudit(
+            contract_id=contract.id,
+            vendor_name=contract.vendor_name,
+            purchase_order_number=contract.purchase_order_number,
+            entity="contract",
+            entity_id=contract.id,
+            event_type="UPDATED",
+            changes=changes,
+            changed_by=current_user.email,
+        ))
     db.commit()
     return _get_contract_or_404(contract_id, db)
 
 
 @router.delete("/{contract_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_contract(contract_id: int, db: Session = Depends(get_db)):
+def delete_contract(
+    contract_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_write),
+):
     contract = _get_contract_or_404(contract_id, db)
+    db.add(ContractAudit(
+        contract_id=contract.id,
+        vendor_name=contract.vendor_name,
+        purchase_order_number=contract.purchase_order_number,
+        entity="contract",
+        entity_id=contract.id,
+        event_type="DELETED",
+        changes={},
+        changed_by=current_user.email,
+    ))
     db.delete(contract)
     db.commit()
 
@@ -270,37 +355,93 @@ def delete_contract(contract_id: int, db: Session = Depends(get_db)):
 # ── ContractLine CRUD ─────────────────────────────────────────────────────────
 
 @router.post("/{contract_id}/lines", response_model=ContractLineOut, status_code=status.HTTP_201_CREATED)
-def add_line(contract_id: int, body: ContractLineCreate, db: Session = Depends(get_db)):
-    _get_contract_or_404(contract_id, db)
+def add_line(
+    contract_id: int,
+    body: ContractLineCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_write),
+):
+    contract = _get_contract_or_404(contract_id, db)
     line = ContractLine(contract_id=contract_id, **body.model_dump())
     _resolve_monthly(line)
     db.add(line)
     db.commit()
     db.refresh(line)
+    db.add(ContractAudit(
+        contract_id=contract.id,
+        vendor_name=contract.vendor_name,
+        purchase_order_number=contract.purchase_order_number,
+        entity="line",
+        entity_id=line.id,
+        event_type="CREATED",
+        changes={},
+        changed_by=current_user.email,
+    ))
+    db.commit()
     return line
 
 
 @router.put("/{contract_id}/lines/{line_id}", response_model=ContractLineOut)
-def update_line(contract_id: int, line_id: int, body: ContractLineUpdate, db: Session = Depends(get_db)):
+def update_line(
+    contract_id: int,
+    line_id: int,
+    body: ContractLineUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_write),
+):
     line = db.execute(
         select(ContractLine).where(ContractLine.id == line_id, ContractLine.contract_id == contract_id)
     ).scalar_one_or_none()
     if not line:
         raise HTTPException(status_code=404, detail="Contract line not found")
-    for field, value in body.model_dump(exclude_unset=True).items():
+    contract = _get_contract_or_404(contract_id, db)
+    updates = body.model_dump(exclude_unset=True)
+    changes = {
+        f: {"old": _serialize_val(getattr(line, f)), "new": _serialize_val(v)}
+        for f, v in updates.items()
+        if _serialize_val(getattr(line, f)) != _serialize_val(v)
+    }
+    for field, value in updates.items():
         setattr(line, field, value)
     _resolve_monthly(line)
+    if changes:
+        db.add(ContractAudit(
+            contract_id=contract_id,
+            vendor_name=contract.vendor_name,
+            purchase_order_number=contract.purchase_order_number,
+            entity="line",
+            entity_id=line.id,
+            event_type="UPDATED",
+            changes=changes,
+            changed_by=current_user.email,
+        ))
     db.commit()
     db.refresh(line)
     return line
 
 
 @router.delete("/{contract_id}/lines/{line_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_line(contract_id: int, line_id: int, db: Session = Depends(get_db)):
+def delete_line(
+    contract_id: int,
+    line_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_write),
+):
     line = db.execute(
         select(ContractLine).where(ContractLine.id == line_id, ContractLine.contract_id == contract_id)
     ).scalar_one_or_none()
     if not line:
         raise HTTPException(status_code=404, detail="Contract line not found")
+    contract = _get_contract_or_404(contract_id, db)
+    db.add(ContractAudit(
+        contract_id=contract_id,
+        vendor_name=contract.vendor_name,
+        purchase_order_number=contract.purchase_order_number,
+        entity="line",
+        entity_id=line.id,
+        event_type="DELETED",
+        changes={},
+        changed_by=current_user.email,
+    ))
     db.delete(line)
     db.commit()

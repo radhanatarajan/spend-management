@@ -217,85 +217,85 @@ class TestCreateContract:
         base.update(overrides)
         return base
 
-    def test_create_minimal_contract(self, client):
-        resp = client.post("/api/contracts", json=self._payload())
+    def test_create_minimal_contract(self, admin_client):
+        resp = admin_client.post("/api/contracts", json=self._payload())
         assert resp.status_code == 201
         body = resp.json()
         assert body["vendor_name"] == "GitHub"
         assert body["lines"] == []
 
-    def test_create_with_monthly_line(self, client):
+    def test_create_with_monthly_line(self, admin_client):
         lines = [dict(
             po_line_number=1,
             period_start="2026-01-01", period_end="2026-12-31",
             billing_interval="monthly", entered_amount="1000.00",
         )]
-        resp = client.post("/api/contracts", json=self._payload(lines=lines))
+        resp = admin_client.post("/api/contracts", json=self._payload(lines=lines))
         assert resp.status_code == 201
         line = resp.json()["lines"][0]
         assert float(line["monthly_amount"]) == 1000.00
         assert float(line["entered_amount"]) == 1000.00
 
-    def test_create_with_quarterly_line_computes_monthly(self, client):
+    def test_create_with_quarterly_line_computes_monthly(self, admin_client):
         lines = [dict(
             po_line_number=1,
             period_start="2026-01-01", period_end="2026-03-31",
             billing_interval="quarterly", entered_amount="3000.00",
         )]
-        resp = client.post("/api/contracts", json=self._payload(lines=lines))
+        resp = admin_client.post("/api/contracts", json=self._payload(lines=lines))
         assert resp.status_code == 201
         line = resp.json()["lines"][0]
         assert float(line["monthly_amount"]) == 1000.00
         assert float(line["entered_amount"]) == 3000.00
 
-    def test_create_with_yearly_line_computes_monthly(self, client):
+    def test_create_with_yearly_line_computes_monthly(self, admin_client):
         lines = [dict(
             po_line_number=1,
             period_start="2026-01-01", period_end="2026-12-31",
             billing_interval="yearly", entered_amount="12000.00",
         )]
-        resp = client.post("/api/contracts", json=self._payload(lines=lines))
+        resp = admin_client.post("/api/contracts", json=self._payload(lines=lines))
         line = resp.json()["lines"][0]
         assert float(line["monthly_amount"]) == 1000.00
 
-    def test_create_with_custom_line_computes_monthly(self, client):
+    def test_create_with_custom_line_computes_monthly(self, admin_client):
         # 6-month period, total 6000 → 1000/mo
         lines = [dict(
             po_line_number=1,
             period_start="2026-01-01", period_end="2026-06-30",
             billing_interval="custom", entered_amount="6000.00",
         )]
-        resp = client.post("/api/contracts", json=self._payload(lines=lines))
+        resp = admin_client.post("/api/contracts", json=self._payload(lines=lines))
         line = resp.json()["lines"][0]
         assert float(line["monthly_amount"]) == 1000.00
 
-    def test_computed_total_amount_on_line(self, client):
+    def test_computed_total_amount_on_line(self, admin_client):
         # monthly 500 × 12 months = 6000
         lines = [dict(
             po_line_number=1,
             period_start="2026-01-01", period_end="2026-12-31",
             billing_interval="monthly", entered_amount="500.00",
         )]
-        resp = client.post("/api/contracts", json=self._payload(lines=lines))
+        resp = admin_client.post("/api/contracts", json=self._payload(lines=lines))
         line = resp.json()["lines"][0]
         assert float(line["total_amount"]) == 6000.00
         assert line["months_in_period"] == 12
 
-    def test_contract_total_sums_lines(self, client):
+    def test_contract_total_sums_lines(self, admin_client):
         lines = [
             dict(po_line_number=1, period_start="2026-01-01", period_end="2026-12-31",
                  billing_interval="monthly", entered_amount="1000.00"),
             dict(po_line_number=2, period_start="2027-01-01", period_end="2027-12-31",
                  billing_interval="monthly", entered_amount="1100.00"),
         ]
-        body = client.post("/api/contracts", json=self._payload(lines=lines)).json()
+        body = admin_client.post("/api/contracts", json=self._payload(lines=lines)).json()
         # 1000×12 + 1100×12 = 12000 + 13200 = 25200
         assert float(body["contract_total"]) == 25200.00
 
-    def test_missing_required_field_returns_422(self, client):
+    def test_missing_required_field_returns_422(self, admin_client):
         payload = self._payload()
         del payload["vendor_name"]
-        resp = client.post("/api/contracts", json=payload)
+        resp = admin_client.post("/api/contracts", json=payload)
         assert resp.status_code == 422
 
 
@@ -320,26 +320,26 @@ class TestGetContract:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestUpdateContract:
-    def test_update_vendor_name(self, client, db):
+    def test_update_vendor_name(self, admin_client, db):
         c = make_contract(db, vendor="OldName")
-        resp = client.put(f"/api/contracts/{c.id}", json={"vendor_name": "NewName"})
+        resp = admin_client.put(f"/api/contracts/{c.id}", json={"vendor_name": "NewName"})
         assert resp.status_code == 200
         assert resp.json()["vendor_name"] == "NewName"
 
-    def test_update_status(self, client, db):
+    def test_update_status(self, admin_client, db):
         c = make_contract(db)
-        resp = client.put(f"/api/contracts/{c.id}", json={"status": "expired"})
+        resp = admin_client.put(f"/api/contracts/{c.id}", json={"status": "expired"})
         assert resp.json()["status"] == "expired"
 
-    def test_partial_update_preserves_other_fields(self, client, db):
+    def test_partial_update_preserves_other_fields(self, admin_client, db):
         c = make_contract(db, vendor="Figma")
-        client.put(f"/api/contracts/{c.id}", json={"status": "pending"})
-        body = client.get(f"/api/contracts/{c.id}").json()
+        admin_client.put(f"/api/contracts/{c.id}", json={"status": "pending"})
+        body = admin_client.get(f"/api/contracts/{c.id}").json()
         assert body["vendor_name"] == "Figma"
         assert body["status"] == "pending"
 
-    def test_update_nonexistent_returns_404(self, client):
-        resp = client.put("/api/contracts/9999", json={"vendor_name": "X"})
+    def test_update_nonexistent_returns_404(self, admin_client):
+        resp = admin_client.put("/api/contracts/9999", json={"vendor_name": "X"})
         assert resp.status_code == 404
 
 
@@ -348,18 +348,18 @@ class TestUpdateContract:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestDeleteContract:
-    def test_delete_returns_204(self, client, db):
+    def test_delete_returns_204(self, admin_client, db):
         c = make_contract(db)
-        resp = client.delete(f"/api/contracts/{c.id}")
+        resp = admin_client.delete(f"/api/contracts/{c.id}")
         assert resp.status_code == 204
 
-    def test_deleted_contract_no_longer_exists(self, client, db):
+    def test_deleted_contract_no_longer_exists(self, admin_client, db):
         c = make_contract(db)
-        client.delete(f"/api/contracts/{c.id}")
-        assert client.get(f"/api/contracts/{c.id}").status_code == 404
+        admin_client.delete(f"/api/contracts/{c.id}")
+        assert admin_client.get(f"/api/contracts/{c.id}").status_code == 404
 
-    def test_delete_nonexistent_returns_404(self, client):
-        assert client.delete("/api/contracts/9999").status_code == 404
+    def test_delete_nonexistent_returns_404(self, admin_client):
+        assert admin_client.delete("/api/contracts/9999").status_code == 404
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -378,25 +378,25 @@ class TestAddLine:
         base.update(overrides)
         return base
 
-    def test_add_line_returns_201(self, client, db):
+    def test_add_line_returns_201(self, admin_client, db):
         c = make_contract(db)
-        resp = client.post(f"/api/contracts/{c.id}/lines", json=self._line_payload())
+        resp = admin_client.post(f"/api/contracts/{c.id}/lines", json=self._line_payload())
         assert resp.status_code == 201
 
-    def test_add_line_computes_monthly_amount(self, client, db):
+    def test_add_line_computes_monthly_amount(self, admin_client, db):
         c = make_contract(db)
-        resp = client.post(f"/api/contracts/{c.id}/lines",
-                           json=self._line_payload(billing_interval="yearly", entered_amount="12000.00"))
+        resp = admin_client.post(f"/api/contracts/{c.id}/lines",
+                                 json=self._line_payload(billing_interval="yearly", entered_amount="12000.00"))
         assert float(resp.json()["monthly_amount"]) == 1000.00
 
-    def test_add_line_to_missing_contract_404(self, client):
-        resp = client.post("/api/contracts/9999/lines", json=self._line_payload())
+    def test_add_line_to_missing_contract_404(self, admin_client):
+        resp = admin_client.post("/api/contracts/9999/lines", json=self._line_payload())
         assert resp.status_code == 404
 
-    def test_line_appears_in_contract(self, client, db):
+    def test_line_appears_in_contract(self, admin_client, db):
         c = make_contract(db)
-        client.post(f"/api/contracts/{c.id}/lines", json=self._line_payload())
-        body = client.get(f"/api/contracts/{c.id}").json()
+        admin_client.post(f"/api/contracts/{c.id}/lines", json=self._line_payload())
+        body = admin_client.get(f"/api/contracts/{c.id}").json()
         assert len(body["lines"]) == 1
 
 
@@ -405,37 +405,37 @@ class TestAddLine:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestUpdateLine:
-    def test_update_amount_recomputes_monthly(self, client, db):
+    def test_update_amount_recomputes_monthly(self, admin_client, db):
         c = make_contract(db, lines=[LINE_Y1])
-        line_id = client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
-        resp = client.put(f"/api/contracts/{c.id}/lines/{line_id}",
-                          json={"entered_amount": "2000.00", "billing_interval": "monthly"})
+        line_id = admin_client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        resp = admin_client.put(f"/api/contracts/{c.id}/lines/{line_id}",
+                                json={"entered_amount": "2000.00", "billing_interval": "monthly"})
         assert resp.status_code == 200
         assert float(resp.json()["monthly_amount"]) == 2000.00
 
-    def test_update_interval_recomputes_monthly(self, client, db):
+    def test_update_interval_recomputes_monthly(self, admin_client, db):
         # Start monthly at 3000, switch to quarterly → 3000/3 = 1000/mo
         c = make_contract(db, lines=[{**LINE_Y1, "entered_amount": Decimal("3000.00")}])
-        line_id = client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
-        resp = client.put(f"/api/contracts/{c.id}/lines/{line_id}",
-                          json={"billing_interval": "quarterly"})
+        line_id = admin_client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        resp = admin_client.put(f"/api/contracts/{c.id}/lines/{line_id}",
+                                json={"billing_interval": "quarterly"})
         assert float(resp.json()["monthly_amount"]) == 1000.00
 
-    def test_update_period_dates(self, client, db):
+    def test_update_period_dates(self, admin_client, db):
         c = make_contract(db, lines=[LINE_Y1])
-        line_id = client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
-        resp = client.put(f"/api/contracts/{c.id}/lines/{line_id}",
-                          json={"period_end": "2026-06-30"})
+        line_id = admin_client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        resp = admin_client.put(f"/api/contracts/{c.id}/lines/{line_id}",
+                                json={"period_end": "2026-06-30"})
         assert resp.status_code == 200
         assert resp.json()["period_end"] == "2026-06-30"
 
-    def test_update_wrong_contract_returns_404(self, client, db):
+    def test_update_wrong_contract_returns_404(self, admin_client, db):
         c1 = make_contract(db, po="PO-A", lines=[LINE_Y1])
         c2 = make_contract(db, po="PO-B")
-        line_id = client.get(f"/api/contracts/{c1.id}").json()["lines"][0]["id"]
+        line_id = admin_client.get(f"/api/contracts/{c1.id}").json()["lines"][0]["id"]
         # Try to update c1's line through c2's URL
-        resp = client.put(f"/api/contracts/{c2.id}/lines/{line_id}",
-                          json={"entered_amount": "999.00"})
+        resp = admin_client.put(f"/api/contracts/{c2.id}/lines/{line_id}",
+                                json={"entered_amount": "999.00"})
         assert resp.status_code == 404
 
 
@@ -444,21 +444,21 @@ class TestUpdateLine:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestDeleteLine:
-    def test_delete_line_returns_204(self, client, db):
+    def test_delete_line_returns_204(self, admin_client, db):
         c = make_contract(db, lines=[LINE_Y1])
-        line_id = client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
-        resp = client.delete(f"/api/contracts/{c.id}/lines/{line_id}")
+        line_id = admin_client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        resp = admin_client.delete(f"/api/contracts/{c.id}/lines/{line_id}")
         assert resp.status_code == 204
 
-    def test_deleted_line_not_in_contract(self, client, db):
+    def test_deleted_line_not_in_contract(self, admin_client, db):
         c = make_contract(db, lines=[LINE_Y1])
-        line_id = client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
-        client.delete(f"/api/contracts/{c.id}/lines/{line_id}")
-        assert client.get(f"/api/contracts/{c.id}").json()["lines"] == []
+        line_id = admin_client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        admin_client.delete(f"/api/contracts/{c.id}/lines/{line_id}")
+        assert admin_client.get(f"/api/contracts/{c.id}").json()["lines"] == []
 
-    def test_delete_missing_line_returns_404(self, client, db):
+    def test_delete_missing_line_returns_404(self, admin_client, db):
         c = make_contract(db)
-        resp = client.delete(f"/api/contracts/{c.id}/lines/9999")
+        resp = admin_client.delete(f"/api/contracts/{c.id}/lines/9999")
         assert resp.status_code == 404
 
 
@@ -597,3 +597,126 @@ class TestContractReport:
         # Jul–Dec 2026: covered
         assert float(row["monthly_amounts"]["2026-07"]) == 500.00
         assert row["monthly_assumed"]["2026-07"] is False
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Contract Audit
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestContractAudit:
+    def _contract_payload(self, **overrides):
+        base = dict(
+            vendor_name="Adobe",
+            oracle_department="1100",
+            oracle_department_name="Engineering",
+            oracle_account_number="ACC-1234",
+            oracle_account_sub_group="Software",
+            purchase_order_number="PO-ADO-001",
+            status="active",
+        )
+        base.update(overrides)
+        return base
+
+    def test_create_contract_logged(self, admin_client):
+        r = admin_client.post("/api/contracts", json=self._contract_payload())
+        assert r.status_code == 201
+        contract_id = r.json()["id"]
+
+        audit = admin_client.get(f"/api/contracts/audit?contract_id={contract_id}").json()
+        assert len(audit) == 1
+        assert audit[0]["event_type"] == "CREATED"
+        assert audit[0]["entity"] == "contract"
+        assert audit[0]["changes"] == {}
+
+    def test_update_contract_logged(self, admin_client, db):
+        c = make_contract(db, vendor="OldCo")
+        admin_client.put(f"/api/contracts/{c.id}", json={"vendor_name": "NewCo"})
+
+        audit = admin_client.get(f"/api/contracts/audit?contract_id={c.id}").json()
+        assert len(audit) == 1
+        assert audit[0]["event_type"] == "UPDATED"
+        assert audit[0]["changes"]["vendor_name"]["old"] == "OldCo"
+        assert audit[0]["changes"]["vendor_name"]["new"] == "NewCo"
+
+    def test_update_no_change_no_audit(self, admin_client, db):
+        c = make_contract(db, vendor="Same")
+        admin_client.put(f"/api/contracts/{c.id}", json={"vendor_name": "Same"})
+        audit = admin_client.get(f"/api/contracts/audit?contract_id={c.id}").json()
+        assert len(audit) == 0
+
+    def test_delete_contract_logged(self, admin_client, db):
+        c = make_contract(db, vendor="Doomed")
+        contract_id = c.id
+        r = admin_client.delete(f"/api/contracts/{contract_id}")
+        assert r.status_code == 204
+
+        audit = admin_client.get(f"/api/contracts/audit?contract_id={contract_id}").json()
+        assert len(audit) == 1
+        assert audit[0]["event_type"] == "DELETED"
+        assert audit[0]["entity"] == "contract"
+
+    def test_add_line_logged(self, admin_client, db):
+        c = make_contract(db)
+        line_payload = dict(
+            po_line_number=1, period_start="2026-01-01", period_end="2026-12-31",
+            billing_interval="monthly", entered_amount="1000.00",
+        )
+        r = admin_client.post(f"/api/contracts/{c.id}/lines", json=line_payload)
+        assert r.status_code == 201
+
+        audit = admin_client.get(f"/api/contracts/audit?contract_id={c.id}").json()
+        assert len(audit) == 1
+        assert audit[0]["event_type"] == "CREATED"
+        assert audit[0]["entity"] == "line"
+
+    def test_update_line_logged(self, admin_client, db):
+        c = make_contract(db, lines=[LINE_Y1])
+        line_id = admin_client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        admin_client.put(f"/api/contracts/{c.id}/lines/{line_id}",
+                         json={"entered_amount": "2000.00", "billing_interval": "monthly"})
+
+        audit = admin_client.get(f"/api/contracts/audit?contract_id={c.id}").json()
+        assert len(audit) == 1
+        assert audit[0]["event_type"] == "UPDATED"
+        assert audit[0]["changes"]["entered_amount"]["old"] == "1000.00"
+        assert audit[0]["changes"]["entered_amount"]["new"] == "2000.00"
+
+    def test_update_line_no_change_no_audit(self, admin_client, db):
+        c = make_contract(db, lines=[LINE_Y1])
+        line_id = admin_client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        # Send same values as already stored
+        admin_client.put(f"/api/contracts/{c.id}/lines/{line_id}",
+                         json={"billing_interval": "monthly"})
+        audit = admin_client.get(f"/api/contracts/audit?contract_id={c.id}").json()
+        assert len(audit) == 0
+
+    def test_delete_line_logged(self, admin_client, db):
+        c = make_contract(db, lines=[LINE_Y1])
+        line_id = admin_client.get(f"/api/contracts/{c.id}").json()["lines"][0]["id"]
+        admin_client.delete(f"/api/contracts/{c.id}/lines/{line_id}")
+
+        audit = admin_client.get(f"/api/contracts/audit?contract_id={c.id}").json()
+        assert len(audit) == 1
+        assert audit[0]["event_type"] == "DELETED"
+        assert audit[0]["entity"] == "line"
+
+    def test_audit_filter_by_vendor(self, admin_client, db):
+        c1 = make_contract(db, vendor="Acme", po="PO-A")
+        c2 = make_contract(db, vendor="Beta", po="PO-B")
+        admin_client.put(f"/api/contracts/{c1.id}", json={"status": "expired"})
+        admin_client.put(f"/api/contracts/{c2.id}", json={"status": "expired"})
+
+        audit = admin_client.get("/api/contracts/audit?vendor_name=Acme").json()
+        assert len(audit) == 1
+        assert audit[0]["vendor_name"] == "Acme"
+
+    def test_audit_requires_auth(self, client):
+        r = client.get("/api/contracts/audit")
+        assert r.status_code == 401
+
+    def test_readonly_can_view_audit(self, readonly_client, admin_client, db):
+        c = make_contract(db)
+        admin_client.put(f"/api/contracts/{c.id}", json={"status": "expired"})
+        r = readonly_client.get(f"/api/contracts/audit?contract_id={c.id}")
+        assert r.status_code == 200
+        assert len(r.json()) == 1

@@ -11,7 +11,7 @@ from src.db.session import get_db
 from src.core.dependencies import get_current_user
 from src.main import app
 from src.models.spend import Spend  # registers Spend with Base.metadata
-from src.models.contract import Contract, ContractLine, ContractStatus, BillingInterval  # noqa: F401
+from src.models.contract import Contract, ContractLine, ContractAudit, ContractStatus, BillingInterval  # noqa: F401
 from src.models.budget import BudgetScenario, BudgetEntry, BudgetNcConfig, BudgetEntryAudit  # noqa: F401
 from src.models.reference import Department, AccountNumber, ProjectId, ActivityId, ReferenceAudit  # noqa: F401
 from src.models.user import User, UserRole
