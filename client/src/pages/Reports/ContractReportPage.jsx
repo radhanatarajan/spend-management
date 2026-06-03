@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { useContractReport } from "../../data/contracts";
+import DropdownSlicer from "../../components/DropdownSlicer";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -34,20 +35,6 @@ function Pill({ active, onClick, children }) {
     >
       {children}
     </button>
-  );
-}
-
-function MultiPill({ label, options, selected, onToggle }) {
-  return (
-    <div className="flex items-center gap-1.5 flex-wrap">
-      <span className="text-xs text-gray-400 shrink-0">{label}:</span>
-      <Pill active={selected.length === 0} onClick={() => onToggle(null)}>All</Pill>
-      {options.map((o) => (
-        <Pill key={o} active={selected.includes(o)} onClick={() => onToggle(o)}>
-          {o}
-        </Pill>
-      ))}
-    </div>
   );
 }
 
@@ -174,9 +161,12 @@ function MonthlyTable({ report, rows }) {
 
 export default function ContractReportPage() {
   const [fiscalYear, setFiscalYear] = useState(currentFiscalYear);
-  const [selVendors, setSelVendors] = useState([]);
-  const [selDepts,   setSelDepts]   = useState([]);
-  const [selStatus,  setSelStatus]  = useState([]);
+  const [selVendors,          setSelVendors]          = useState([]);
+  const [selDepts,            setSelDepts]            = useState([]);
+  const [selStatus,           setSelStatus]           = useState([]);
+  const [selAccountGroups,    setSelAccountGroups]    = useState([]);
+  const [selAccountSubGroups, setSelAccountSubGroups] = useState([]);
+  const [selCostElements,     setSelCostElements]     = useState([]);
 
   const { data: report, isLoading, isError } = useContractReport(fiscalYear);
 
@@ -187,17 +177,15 @@ export default function ContractReportPage() {
   const filteredRows = useMemo(() => {
     if (!report) return [];
     return report.rows.filter((r) => {
-      if (selVendors.length && !selVendors.includes(r.vendor_name)) return false;
-      if (selDepts.length   && !selDepts.includes(r.oracle_department_name)) return false;
-      if (selStatus.length  && !selStatus.includes(r.status)) return false;
+      if (selVendors.length          && !selVendors.includes(r.vendor_name))              return false;
+      if (selDepts.length            && !selDepts.includes(r.oracle_department_name))      return false;
+      if (selStatus.length           && !selStatus.includes(r.status))                    return false;
+      if (selAccountGroups.length    && !selAccountGroups.includes(r.account_group))      return false;
+      if (selAccountSubGroups.length && !selAccountSubGroups.includes(r.account_sub_group)) return false;
+      if (selCostElements.length     && !selCostElements.includes(r.cost_element))        return false;
       return true;
     });
-  }, [report, selVendors, selDepts, selStatus]);
-
-  function toggleMulti(setter, current, value) {
-    if (value === null) return setter([]);
-    setter((prev) => prev.includes(value) ? prev.filter((x) => x !== value) : [...prev, value]);
-  }
+  }, [report, selVendors, selDepts, selStatus, selAccountGroups, selAccountSubGroups, selCostElements]);
 
   // KPIs
   const numContracts   = filteredRows.length;
@@ -228,25 +216,50 @@ export default function ContractReportPage() {
 
       {/* Slicers */}
       {report && (
-        <div className="bg-white border border-gray-100 rounded-xl px-4 py-3 space-y-2.5">
-          <MultiPill
-            label="Vendor"
-            options={report.filter_options.vendors}
-            selected={selVendors}
-            onToggle={(v) => toggleMulti(setSelVendors, selVendors, v)}
-          />
-          <MultiPill
-            label="Department"
-            options={report.filter_options.departments}
-            selected={selDepts}
-            onToggle={(v) => toggleMulti(setSelDepts, selDepts, v)}
-          />
-          <MultiPill
-            label="Status"
-            options={report.filter_options.statuses}
-            selected={selStatus}
-            onToggle={(v) => toggleMulti(setSelStatus, selStatus, v)}
-          />
+        <div className="bg-white border border-gray-100 rounded-xl px-4 py-3">
+          <div className="grid grid-cols-3 gap-3">
+            <DropdownSlicer
+              title="Vendor"
+              options={report.filter_options.vendors}
+              selected={selVendors}
+              onToggle={setSelVendors}
+              searchable
+            />
+            <DropdownSlicer
+              title="Department"
+              options={report.filter_options.departments}
+              selected={selDepts}
+              onToggle={setSelDepts}
+              searchable
+            />
+            <DropdownSlicer
+              title="Status"
+              options={report.filter_options.statuses}
+              selected={selStatus}
+              onToggle={setSelStatus}
+            />
+            <DropdownSlicer
+              title="Account Group"
+              options={report.filter_options.account_groups}
+              selected={selAccountGroups}
+              onToggle={setSelAccountGroups}
+              searchable
+            />
+            <DropdownSlicer
+              title="Account Sub Group"
+              options={report.filter_options.account_sub_groups}
+              selected={selAccountSubGroups}
+              onToggle={setSelAccountSubGroups}
+              searchable
+            />
+            <DropdownSlicer
+              title="Cost Element"
+              options={report.filter_options.cost_elements}
+              selected={selCostElements}
+              onToggle={setSelCostElements}
+              searchable
+            />
+          </div>
         </div>
       )}
 

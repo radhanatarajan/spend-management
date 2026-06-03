@@ -107,6 +107,7 @@ def init_db() -> None:
     _migrate_contract_lines_audit_table()
     _migrate_budget_scenario_audit_table()
     _migrate_budget_nc_config_audit_table()
+    _migrate_contracts_enriched_view()
     _seed_db()
     _seed_users()
     _seed_contracts()
@@ -613,6 +614,32 @@ def _migrate_budget_nc_config_audit_table() -> None:
                 changed_by,
                 changed_at
             FROM budget_nc_config_audit
+        """))
+        conn.commit()
+
+
+def _migrate_contracts_enriched_view() -> None:
+    """Create or replace v_contracts_enriched — contracts joined to account_numbers reference data."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW v_contracts_enriched AS
+            SELECT
+                c.id,
+                c.vendor_name,
+                c.description,
+                c.oracle_department,
+                c.oracle_department_name,
+                c.oracle_account_number,
+                c.oracle_account_sub_group,
+                c.purchase_order_number,
+                c.status,
+                c.created_at,
+                c.updated_at,
+                COALESCE(a.account_group, '')                          AS account_group,
+                COALESCE(a.account_sub_group, c.oracle_account_sub_group) AS account_sub_group_ref,
+                COALESCE(a.cost_element, '')                           AS cost_element
+            FROM contracts c
+            LEFT JOIN account_numbers a ON c.oracle_account_number = a.account_number
         """))
         conn.commit()
 
