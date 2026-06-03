@@ -210,24 +210,36 @@ spend-management/
 
 ### Audit Design
 
-**Rule: every writable table must have a corresponding audit table.** When adding a new domain table, add its audit table in the same PR.
+**Rule: every writable table must have audit coverage.** When adding a new domain table, add audit in the same PR. Which pattern to use depends on data velocity:
 
-**Audit table pattern:**
-- Table name: `<domain>_audit` (e.g. `contract_audit`, `reference_audit`, `budget_entry_audit`)
+### Pattern A — `reference_audit` (shared table, slow-changing data)
+
+Use for master/reference data that changes a few times a year: departments, account numbers, project IDs, activity IDs.
+
+- Single `reference_audit` table with `table_name` + `record_id` string discriminators
+- Per-entity views (`v_reference_audit_departments`, etc.) for readable queries
+- `record_id` is the entity's natural key as a string
+
+### Pattern B — individual `<domain>_audit` table (high-velocity transactional data)
+
+Use for data that changes frequently during active business cycles: contracts, budget entries, scenarios, nc_config.
+
+- Table name: `<domain>_audit` (e.g. `contract_audit`, `budget_scenario_audit`)
+- Include denormalized identity columns so rows survive deletes (e.g. `vendor_name` on `contract_audit`, `fiscal_year` + `scenario_name` on `budget_scenario_audit`)
+- Create `v_<domain>_audit` MySQL view with `JSON_EXTRACT` / `JSON_UNQUOTE` columns
+
+### Shared rules (both patterns)
+
 - Always include: `id` (PK), `event_type` (CREATED/UPDATED/DELETED), `changes` (JSON), `changed_by` (user email), `changed_at` (datetime, indexed)
-- Include denormalized identity columns so audit rows survive deletes (e.g. `vendor_name`, `purchase_order_number` on `contract_audit`; `table_name` + `record_id` on `reference_audit`)
-- `changes` shape: `{"field": {"old": "prev_val", "new": "new_val"}}` — only changed fields, serialized to strings via a `_serialize_val()` helper (handles `date`, `Decimal`, `enum`)
+- `changes` shape: `{"field": {"old": "prev_val", "new": "new_val"}}` — only changed fields, serialized to strings via `_serialize_val()` (handles `date`, `Decimal`, `enum`)
 - Write no audit row if the changes dict is empty (no-op update guard)
-- Audit rows are written in the same DB transaction as the data change
-- Create a corresponding MySQL view `v_<domain>_audit` with `JSON_EXTRACT` / `JSON_UNQUOTE` to unpack common changed fields into named columns
+- Audit rows written in the same DB transaction as the data change
+- All write endpoints on auditable tables must use `require_write` to capture `current_user.email`
+- Expose `GET /api/<domain>/audit` (any authenticated role), registered before `/{id}` routes to avoid FastAPI path conflicts
 
-**Auth requirement:** all write endpoints (POST/PUT/DELETE) that touch auditable tables must use `require_write` so `changed_by` can be captured from `current_user.email`.
-
-**Read endpoint:** expose `GET /api/<domain>/audit` (auth required, any role) filterable by primary identifier. Register this route before `/{id}` routes to avoid FastAPI path conflicts.
-
-**`budget_entry_audit` specifics** (predates the general pattern):
-- `event_type` values: `AMOUNT_CHANGED`, `STATUS_CHANGED` (not CREATED/UPDATED/DELETED)
-- MySQL view `v_budget_entry_audit` unpacks JSON into named columns for the Budget Change Log report
+**`budget_entry_audit` note** (predates this convention):
+- Uses `event_type` values `AMOUNT_CHANGED` / `STATUS_CHANGED` instead of CREATED/UPDATED/DELETED
+- MySQL view `v_budget_entry_audit` unpacks JSON for the Budget Change Log report
 
 ### Status State Machine (`budget_entries.status`)
 
