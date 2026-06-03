@@ -44,3 +44,8 @@ export async function fetchContractReport(fiscalYear) {
   const { data } = await axios.get(`${BASE}/report`, { params: { fiscal_year: fiscalYear } });
   return data;
 }
+
+export async function fetchContractAuditReport() {
+  const { data } = await axios.get(`${BASE}/reports/audit`);
+  return data;
+}

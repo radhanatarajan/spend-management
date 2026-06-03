@@ -167,6 +167,25 @@ class ContractReportOut(BaseModel):
     filter_options: dict        # {"vendors": [...], "departments": [...], "statuses": [...]}
 
 
+class ContractAuditReportRow(BaseModel):
+    audit_id: str           # "c-{id}" or "l-{id}" — unique across both tables
+    entity_type: str        # "Contract" or "Line"
+    entity_id: int          # contract_id for Contract, contract_line_id for Line
+    contract_id: int
+    vendor_name: str
+    purchase_order_number: str
+    po_line_number: int | None
+    event_type: str         # CREATED / UPDATED / DELETED
+    changes: dict
+    changed_by: str
+    changed_at: datetime
+
+
+class ContractAuditReportOut(BaseModel):
+    rows: list[ContractAuditReportRow]
+    filter_options: dict
+
+
 class ContractAuditOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

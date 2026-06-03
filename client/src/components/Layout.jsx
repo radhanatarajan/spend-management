@@ -52,8 +52,9 @@ const NAV_ITEMS = [
 
 const REPORT_ITEMS = [
   { to: "/reports/spend",      label: "Spend Report" },
-  { to: "/reports/contracts",  label: "Contract Report" },
-  { to: "/reports/budget-audit", label: "Budget Change Log" },
+  { to: "/reports/contracts",      label: "Contract Report" },
+  { to: "/reports/contract-audit", label: "Contract Change Log" },
+  { to: "/reports/budget-audit",   label: "Budget Change Log" },
   { to: "/reports/forecast",     label: "Forecast Report", disabled: true },
   { to: "/reports/budget",       label: "Budget Report",   disabled: true },
 ];

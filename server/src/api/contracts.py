@@ -15,6 +15,7 @@ from src.schemas.contract import (
     ContractLineCreate, ContractLineUpdate, ContractLineOut,
     ContractReportOut, ContractReportRow,
     ContractAuditOut, ContractLineAuditOut,
+    ContractAuditReportRow, ContractAuditReportOut,
     compute_monthly_amount,
     month_to_fy, fiscal_year_months, month_label,
 )
@@ -241,6 +242,64 @@ def get_contract_report(
             "account_groups": sorted({r.account_group for r in rows if r.account_group}),
             "account_sub_groups": sorted({r.account_sub_group for r in rows if r.account_sub_group}),
             "cost_elements": sorted({r.cost_element for r in rows if r.cost_element}),
+        },
+    )
+
+
+# ── Contract Change Log ───────────────────────────────────────────────────────
+
+@router.get("/reports/audit", response_model=ContractAuditReportOut)
+def get_contract_audit_report(
+    db: Session = Depends(get_db),
+    _=Depends(require_any),
+):
+    contract_rows = db.execute(
+        select(ContractAudit).order_by(ContractAudit.changed_at.desc()).limit(2000)
+    ).scalars().all()
+
+    line_rows = db.execute(
+        select(ContractLineAudit).order_by(ContractLineAudit.changed_at.desc()).limit(2000)
+    ).scalars().all()
+
+    rows: list[ContractAuditReportRow] = []
+    for r in contract_rows:
+        rows.append(ContractAuditReportRow(
+            audit_id=f"c-{r.id}",
+            entity_type="Contract",
+            entity_id=r.contract_id,
+            contract_id=r.contract_id,
+            vendor_name=r.vendor_name,
+            purchase_order_number=r.purchase_order_number,
+            po_line_number=None,
+            event_type=r.event_type,
+            changes=r.changes,
+            changed_by=r.changed_by,
+            changed_at=r.changed_at,
+        ))
+    for r in line_rows:
+        rows.append(ContractAuditReportRow(
+            audit_id=f"l-{r.id}",
+            entity_type="Line",
+            entity_id=r.contract_line_id,
+            contract_id=r.contract_id,
+            vendor_name=r.vendor_name,
+            purchase_order_number=r.purchase_order_number,
+            po_line_number=r.po_line_number,
+            event_type=r.event_type,
+            changes=r.changes,
+            changed_by=r.changed_by,
+            changed_at=r.changed_at,
+        ))
+
+    rows.sort(key=lambda r: r.changed_at, reverse=True)
+
+    return ContractAuditReportOut(
+        rows=rows,
+        filter_options={
+            "vendors":      sorted({r.vendor_name for r in rows}),
+            "event_types":  sorted({r.event_type for r in rows}),
+            "entity_types": sorted({r.entity_type for r in rows}),
+            "users":        sorted({r.changed_by for r in rows}),
         },
     )
 

@@ -3,7 +3,7 @@ import {
   fetchContracts, fetchContract,
   createContract, updateContract, deleteContract,
   addContractLine, updateContractLine, deleteContractLine,
-  fetchContractReport,
+  fetchContractReport, fetchContractAuditReport,
 } from "./api";
 
 const KEYS = {
@@ -83,6 +83,14 @@ export function useContractReport(fiscalYear) {
     queryKey: ["contractReport", fiscalYear],
     queryFn: () => fetchContractReport(fiscalYear),
     enabled: fiscalYear != null,
+    staleTime: 30_000,
+  });
+}
+
+export function useContractAuditReport() {
+  return useQuery({
+    queryKey: ["contractAuditReport"],
+    queryFn: fetchContractAuditReport,
     staleTime: 30_000,
   });
 }
