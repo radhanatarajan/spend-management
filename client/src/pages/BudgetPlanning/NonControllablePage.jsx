@@ -2,6 +2,8 @@ import { useState, useMemo } from "react";
 import { useScenarios, useNonControllablePlan } from "../../data/budget/hooks";
 import ScenarioPanel from "./components/ScenarioPanel";
 import CostElementFilter from "./components/CostElementFilter";
+import AccountGroupFilter from "./components/AccountGroupFilter";
+import AccountSubGroupFilter from "./components/AccountSubGroupFilter";
 import ActualsCutoffControl from "./components/ActualsCutoffControl";
 import NonControllableTable from "./components/NonControllableTable";
 import WhatIfPanel from "./components/WhatIfPanel";
@@ -135,6 +137,8 @@ export default function NonControllablePage() {
       {/* Filters */}
       <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
         <CostElementFilter fiscalYear={fiscalYear} />
+        <AccountGroupFilter fiscalYear={fiscalYear} />
+        <AccountSubGroupFilter fiscalYear={fiscalYear} />
         <ActualsCutoffControl fiscalYear={fiscalYear} />
         {deptOptions.length > 0 && (
           <div className="flex items-center gap-3">

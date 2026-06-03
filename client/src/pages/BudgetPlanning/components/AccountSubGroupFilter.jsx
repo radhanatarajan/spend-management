@@ -1,22 +1,22 @@
-import { useNcConfig, useUpdateNcConfig, useCostElements } from "../../../data/budget/hooks";
+import { useNcConfig, useUpdateNcConfig, useAccountSubGroups } from "../../../data/budget/hooks";
 import { useAuth } from "../../../context/AuthContext";
 import DropdownSlicer from "../../../components/DropdownSlicer";
 
-export default function CostElementFilter({ fiscalYear }) {
+export default function AccountSubGroupFilter({ fiscalYear }) {
   const { data: config } = useNcConfig(fiscalYear);
-  const { data: available = [] } = useCostElements();
+  const { data: available = [] } = useAccountSubGroups();
   const { mutate: updateConfig, isPending } = useUpdateNcConfig();
   const { user } = useAuth();
 
   const isAdmin = user?.role === "ADMIN" || user?.role === "BIZ_ADMIN";
-  const selected = config?.selected_cost_elements ?? [];
+  const selected = config?.selected_account_sub_groups ?? [];
 
   function handleToggle(newSelected) {
     updateConfig({
       fiscal_year: fiscalYear,
-      selected_cost_elements: newSelected,
+      selected_cost_elements: config?.selected_cost_elements ?? [],
       selected_account_groups: config?.selected_account_groups ?? [],
-      selected_account_sub_groups: config?.selected_account_sub_groups ?? [],
+      selected_account_sub_groups: newSelected,
       actuals_cutoff_month_key: config?.actuals_cutoff_month_key ?? null,
     });
   }
@@ -24,16 +24,16 @@ export default function CostElementFilter({ fiscalYear }) {
   if (!isAdmin) {
     return (
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className="text-xs text-gray-400 shrink-0">Cost Elements:</span>
+        <span className="text-xs text-gray-400 shrink-0">Account Sub Group:</span>
         {selected.length === 0 ? (
-          <span className="text-xs text-gray-400 italic">None configured</span>
+          <span className="text-xs text-gray-400 italic">All</span>
         ) : (
-          selected.map((el) => (
+          selected.map((g) => (
             <span
-              key={el}
-              className="text-xs px-2.5 py-1 rounded-md border bg-indigo-50 border-indigo-200 text-indigo-700 whitespace-nowrap"
+              key={g}
+              className="text-xs px-2.5 py-1 rounded-md border bg-sky-50 border-sky-200 text-sky-700 whitespace-nowrap"
             >
-              {el}
+              {g}
             </span>
           ))
         )}
@@ -43,10 +43,10 @@ export default function CostElementFilter({ fiscalYear }) {
 
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
-      <span className="text-xs text-gray-400 shrink-0">Cost Elements:</span>
+      <span className="text-xs text-gray-400 shrink-0">Account Sub Group:</span>
       <div className={`w-56 ${isPending ? "opacity-60 pointer-events-none" : ""}`}>
         <DropdownSlicer
-          title="Cost Element"
+          title="Account Sub Group"
           options={available}
           selected={selected}
           onToggle={handleToggle}

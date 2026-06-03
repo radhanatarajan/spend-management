@@ -7,6 +7,16 @@ export async function fetchCostElements() {
   return data;
 }
 
+export async function fetchAccountGroups() {
+  const { data } = await axios.get(`${BASE}/account-groups`);
+  return data;
+}
+
+export async function fetchAccountSubGroups() {
+  const { data } = await axios.get(`${BASE}/account-sub-groups`);
+  return data;
+}
+
 export async function fetchNcConfig(fiscalYear) {
   const { data } = await axios.get(`${BASE}/config`, { params: { fiscal_year: fiscalYear } });
   return data;
