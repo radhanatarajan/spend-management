@@ -61,6 +61,8 @@ def _compute_current(
     selected_elements: list[str],
     db: Session,
     cutoff_month_key: int | None = None,
+    selected_account_groups: list[str] | None = None,
+    selected_account_sub_groups: list[str] | None = None,
 ) -> tuple[dict[str, DepartmentBudgetRow], list[str]]:
     """Compute 'Current' quarterly amounts using the prior fiscal year as the planning baseline.
 
@@ -74,15 +76,23 @@ def _compute_current(
     py_end   = _month_key(prior_year, 12)
 
     # Actuals for the prior year
-    actuals_rows = db.execute(
-        select(Spend.oracle_department_name, Spend.month_key, func.sum(Spend.amount_usd).label("total"))
-        .where(
+    if selected_elements:
+        conditions = [
             Spend.month_key >= py_start,
             Spend.month_key <= py_end,
-            Spend.oracle_cost_element.in_(selected_elements) if selected_elements else False,
-        )
-        .group_by(Spend.oracle_department_name, Spend.month_key)
-    ).all() if selected_elements else []
+            Spend.oracle_cost_element.in_(selected_elements),
+        ]
+        if selected_account_groups:
+            conditions.append(Spend.oracle_account_group.in_(selected_account_groups))
+        if selected_account_sub_groups:
+            conditions.append(Spend.oracle_account_sub_group.in_(selected_account_sub_groups))
+        actuals_rows = db.execute(
+            select(Spend.oracle_department_name, Spend.month_key, func.sum(Spend.amount_usd).label("total"))
+            .where(*conditions)
+            .group_by(Spend.oracle_department_name, Spend.month_key)
+        ).all()
+    else:
+        actuals_rows = []
 
     # Build dict: dept → {month_key: amount}
     actuals: dict[str, dict[int, Decimal]] = {}
@@ -102,12 +112,17 @@ def _compute_current(
     # Per-dept carry-forward amount from last_mk
     carry_forward: dict[str, Decimal] = {}
     if last_mk and selected_elements:
+        cf_conditions = [
+            Spend.month_key == last_mk,
+            Spend.oracle_cost_element.in_(selected_elements),
+        ]
+        if selected_account_groups:
+            cf_conditions.append(Spend.oracle_account_group.in_(selected_account_groups))
+        if selected_account_sub_groups:
+            cf_conditions.append(Spend.oracle_account_sub_group.in_(selected_account_sub_groups))
         cf_rows = db.execute(
             select(Spend.oracle_department_name, func.sum(Spend.amount_usd).label("total"))
-            .where(
-                Spend.month_key == last_mk,
-                Spend.oracle_cost_element.in_(selected_elements),
-            )
+            .where(*cf_conditions)
             .group_by(Spend.oracle_department_name)
         ).all()
         for dept, total in cf_rows:
@@ -186,6 +201,28 @@ def get_cost_elements(
     return [r[0] for r in rows]
 
 
+@router.get("/account-groups", response_model=list[str])
+def get_account_groups(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_any),
+):
+    rows = db.execute(
+        select(distinct(Spend.oracle_account_group)).order_by(Spend.oracle_account_group)
+    ).all()
+    return [r[0] for r in rows if r[0]]
+
+
+@router.get("/account-sub-groups", response_model=list[str])
+def get_account_sub_groups(
+    db: Session = Depends(get_db),
+    _: User = Depends(require_any),
+):
+    rows = db.execute(
+        select(distinct(Spend.oracle_account_sub_group)).order_by(Spend.oracle_account_sub_group)
+    ).all()
+    return [r[0] for r in rows if r[0]]
+
+
 # ── NC Config ─────────────────────────────────────────────────────────────────
 
 @router.get("/config", response_model=BudgetNcConfigOut)
@@ -222,6 +259,8 @@ def update_nc_config(
         cfg = BudgetNcConfig(
             fiscal_year=body.fiscal_year,
             selected_cost_elements=body.selected_cost_elements,
+            selected_account_groups=body.selected_account_groups,
+            selected_account_sub_groups=body.selected_account_sub_groups,
             actuals_cutoff_month_key=body.actuals_cutoff_month_key,
             updated_by=current_user.email,
         )
@@ -238,9 +277,15 @@ def update_nc_config(
         changes = {}
         if cfg.selected_cost_elements != body.selected_cost_elements:
             changes["selected_cost_elements"] = {"old": cfg.selected_cost_elements, "new": body.selected_cost_elements}
+        if cfg.selected_account_groups != body.selected_account_groups:
+            changes["selected_account_groups"] = {"old": cfg.selected_account_groups, "new": body.selected_account_groups}
+        if cfg.selected_account_sub_groups != body.selected_account_sub_groups:
+            changes["selected_account_sub_groups"] = {"old": cfg.selected_account_sub_groups, "new": body.selected_account_sub_groups}
         if cfg.actuals_cutoff_month_key != body.actuals_cutoff_month_key:
             changes["actuals_cutoff_month_key"] = {"old": cfg.actuals_cutoff_month_key, "new": body.actuals_cutoff_month_key}
         cfg.selected_cost_elements = body.selected_cost_elements
+        cfg.selected_account_groups = body.selected_account_groups
+        cfg.selected_account_sub_groups = body.selected_account_sub_groups
         cfg.actuals_cutoff_month_key = body.actuals_cutoff_month_key
         cfg.updated_by = current_user.email
         if changes:
@@ -529,7 +574,12 @@ def get_non_controllable_plan(
     ).scalars().all()
 
     # Compute current from actuals + carry-forward
-    dept_rows, all_depts = _compute_current(fiscal_year, selected_elements, db, cfg.actuals_cutoff_month_key if cfg else None)
+    dept_rows, all_depts = _compute_current(
+        fiscal_year, selected_elements, db,
+        cfg.actuals_cutoff_month_key if cfg else None,
+        cfg.selected_account_groups if cfg else None,
+        cfg.selected_account_sub_groups if cfg else None,
+    )
 
     # Load entries for the scenario
     entries = db.execute(

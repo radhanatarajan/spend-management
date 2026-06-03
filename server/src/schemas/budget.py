@@ -113,6 +113,8 @@ class BudgetEntryOut(BaseModel):
 class BudgetNcConfigOut(BaseModel):
     fiscal_year: int
     selected_cost_elements: list[str]
+    selected_account_groups: list[str] = Field(default_factory=list)
+    selected_account_sub_groups: list[str] = Field(default_factory=list)
     actuals_cutoff_month_key: Optional[int] = None
     updated_by: str
     updated_at: datetime
@@ -123,6 +125,8 @@ class BudgetNcConfigOut(BaseModel):
 class BudgetNcConfigUpdate(BaseModel):
     fiscal_year: int
     selected_cost_elements: list[str]
+    selected_account_groups: list[str] = Field(default_factory=list)
+    selected_account_sub_groups: list[str] = Field(default_factory=list)
     actuals_cutoff_month_key: Optional[int] = None
 
 

@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  fetchCostElements, fetchNcConfig, updateNcConfig,
+  fetchCostElements, fetchAccountGroups, fetchAccountSubGroups,
+  fetchNcConfig, updateNcConfig,
   fetchScenarios, createScenario, updateScenario, deleteScenario,
   fetchNonControllablePlan, upsertEntry, deleteEntry,
   fetchScenarioComparison, updateEntryStatus, fetchScenarioAudit,
@@ -9,6 +10,8 @@ import {
 
 const KEYS = {
   costElements: ["budget", "costElements"],
+  accountGroups: ["budget", "accountGroups"],
+  accountSubGroups: ["budget", "accountSubGroups"],
   ncConfig: (fy) => ["budget", "ncConfig", fy],
   scenarios: (fy, type) => ["budget", "scenarios", fy, type],
   ncPlan: (fy, scenarioId) => ["budget", "ncPlan", fy, scenarioId],
@@ -18,6 +21,22 @@ export function useCostElements() {
   return useQuery({
     queryKey: KEYS.costElements,
     queryFn: fetchCostElements,
+    staleTime: 300_000,
+  });
+}
+
+export function useAccountGroups() {
+  return useQuery({
+    queryKey: KEYS.accountGroups,
+    queryFn: fetchAccountGroups,
+    staleTime: 300_000,
+  });
+}
+
+export function useAccountSubGroups() {
+  return useQuery({
+    queryKey: KEYS.accountSubGroups,
+    queryFn: fetchAccountSubGroups,
     staleTime: 300_000,
   });
 }

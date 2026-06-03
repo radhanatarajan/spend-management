@@ -187,6 +187,18 @@ def _migrate_budget_nc_config() -> None:
             ))
             conn.commit()
 
+        if "selected_account_groups" not in existing:
+            conn.execute(text(
+                "ALTER TABLE budget_nc_config ADD COLUMN selected_account_groups JSON NOT NULL DEFAULT (JSON_ARRAY())"
+            ))
+            conn.commit()
+
+        if "selected_account_sub_groups" not in existing:
+            conn.execute(text(
+                "ALTER TABLE budget_nc_config ADD COLUMN selected_account_sub_groups JSON NOT NULL DEFAULT (JSON_ARRAY())"
+            ))
+            conn.commit()
+
 
 def _migrate_budget_audit_view() -> None:
     """Create or replace v_budget_entry_audit — joins budget_entries + budget_scenarios

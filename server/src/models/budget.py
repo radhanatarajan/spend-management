@@ -87,6 +87,8 @@ class BudgetNcConfig(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     fiscal_year: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     selected_cost_elements: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    selected_account_groups: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    selected_account_sub_groups: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     actuals_cutoff_month_key: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_by: Mapped[str] = mapped_column(String(255), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(

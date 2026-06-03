@@ -29,6 +29,8 @@ export default function ActualsCutoffControl({ fiscalYear }) {
     updateConfig({
       fiscal_year: fiscalYear,
       selected_cost_elements: config?.selected_cost_elements ?? [],
+      selected_account_groups: config?.selected_account_groups ?? [],
+      selected_account_sub_groups: config?.selected_account_sub_groups ?? [],
       actuals_cutoff_month_key: value,
     });
   }
