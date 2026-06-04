@@ -107,7 +107,10 @@ def init_db() -> None:
     _migrate_contract_lines_audit_table()
     _migrate_budget_scenario_audit_table()
     _migrate_budget_nc_config_audit_table()
+    _migrate_contract_lines_account_fields()
     _migrate_contracts_enriched_view()
+    _migrate_contract_activity_id()
+    _migrate_backfill_contract_line_activity_ids()
     _seed_db()
     _seed_users()
     _seed_contracts()
@@ -121,6 +124,7 @@ def init_db() -> None:
     _backfill_spend_departments()
     _backfill_spend_activities()
     _assign_nc_activity_ids()
+    _seed_saas_contract_account_ids()
     _backfill_account_desc()
 
 
@@ -632,7 +636,7 @@ def _migrate_budget_nc_config_audit_table() -> None:
 
 
 def _migrate_contracts_enriched_view() -> None:
-    """Create or replace v_contracts_enriched — contracts joined to account_numbers reference data."""
+    """Create or replace v_contracts_enriched — contracts + lines joined to account_numbers."""
     with engine.connect() as conn:
         conn.execute(text("""
             CREATE OR REPLACE VIEW v_contracts_enriched AS
@@ -642,17 +646,21 @@ def _migrate_contracts_enriched_view() -> None:
                 c.description,
                 c.oracle_department,
                 c.oracle_department_name,
-                c.oracle_account_number,
-                c.oracle_account_sub_group,
                 c.purchase_order_number,
                 c.status,
                 c.created_at,
                 c.updated_at,
-                COALESCE(a.account_group, '')                          AS account_group,
-                COALESCE(a.account_sub_group, c.oracle_account_sub_group) AS account_sub_group_ref,
-                COALESCE(a.cost_element, '')                           AS cost_element
+                cl.id                                                          AS line_id,
+                cl.po_line_number,
+                cl.oracle_account_number,
+                cl.oracle_account_sub_group,
+                cl.activity_id,
+                COALESCE(a.account_group, '')                                  AS account_group,
+                COALESCE(a.account_sub_group, cl.oracle_account_sub_group)     AS account_sub_group_ref,
+                COALESCE(a.cost_element, '')                                   AS cost_element
             FROM contracts c
-            LEFT JOIN account_numbers a ON c.oracle_account_number = a.account_number
+            JOIN contract_lines cl ON cl.contract_id = c.id
+            LEFT JOIN account_numbers a ON cl.oracle_account_number = a.account_number
         """))
         conn.commit()
 
@@ -964,6 +972,97 @@ def _migrate_contract_lines() -> None:
         conn.commit()
 
 
+def _migrate_contract_activity_id() -> None:
+    """Drop legacy activity_id column from contracts table (activity_id lives on contract_lines now)."""
+    with engine.connect() as conn:
+        table_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'contracts'"
+        )).scalar()
+        if not table_exists:
+            return
+
+        existing = {
+            row[0] for row in conn.execute(text(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'contracts'"
+            ))
+        }
+        if "activity_id" in existing:
+            conn.execute(text("ALTER TABLE contracts DROP COLUMN activity_id"))
+        conn.commit()
+
+
+def _migrate_contract_lines_account_fields() -> None:
+    """Add oracle_account_number, oracle_account_sub_group, activity_id to contract_lines and backfill from contracts (idempotent, MySQL-only)."""
+    with engine.connect() as conn:
+        table_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'contract_lines'"
+        )).scalar()
+        if not table_exists:
+            return
+
+        existing = {
+            row[0] for row in conn.execute(text(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'contract_lines'"
+            ))
+        }
+
+        if "oracle_account_number" not in existing:
+            conn.execute(text(
+                "ALTER TABLE contract_lines ADD COLUMN oracle_account_number VARCHAR(50) NOT NULL DEFAULT ''"
+            ))
+            conn.execute(text(
+                "ALTER TABLE contract_lines ADD INDEX ix_contract_lines_oracle_account_number (oracle_account_number)"
+            ))
+        if "oracle_account_sub_group" not in existing:
+            conn.execute(text(
+                "ALTER TABLE contract_lines ADD COLUMN oracle_account_sub_group VARCHAR(255) NOT NULL DEFAULT ''"
+            ))
+        if "activity_id" not in existing:
+            conn.execute(text(
+                "ALTER TABLE contract_lines ADD COLUMN activity_id VARCHAR(20) NULL"
+            ))
+            conn.execute(text(
+                "ALTER TABLE contract_lines ADD INDEX ix_contract_lines_activity_id (activity_id)"
+            ))
+
+        # Backfill account fields from contracts where lines have empty account number
+        conn.execute(text("""
+            UPDATE contract_lines cl
+            JOIN contracts c ON cl.contract_id = c.id
+            SET
+                cl.oracle_account_number    = COALESCE(NULLIF(c.oracle_account_number, ''),    cl.oracle_account_number),
+                cl.oracle_account_sub_group = COALESCE(NULLIF(c.oracle_account_sub_group, ''), cl.oracle_account_sub_group)
+            WHERE cl.oracle_account_number = ''
+        """))
+        conn.commit()
+
+
+def _migrate_backfill_contract_line_activity_ids() -> None:
+    """Populate contract_lines.activity_id from the activity_ids reference table.
+
+    Joins via (account_numbers, department_code) — the same lookup the contract report uses.
+    Only fills NULL rows (idempotent, never overwrites a user-set value).
+    MySQL-only; no-ops on SQLite.
+    """
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("""
+                UPDATE contract_lines cl
+                JOIN contracts c ON cl.contract_id = c.id
+                JOIN account_numbers a ON cl.oracle_account_number = a.account_number
+                JOIN activity_ids ai ON ai.account_id = a.id AND ai.department_code = c.oracle_department
+                SET cl.activity_id = ai.activity_id
+                WHERE cl.activity_id IS NULL
+            """))
+            conn.commit()
+        except Exception:
+            pass  # SQLite or missing tables — safe to skip
+
+
 def _seed_users() -> None:
     from src.models.user import User, UserRole
     from src.core.security import hash_password
@@ -1114,8 +1213,12 @@ def _seed_contracts() -> None:
 
         for item in seed_data:
             lines_data = item.pop("lines")
+            acct_number = item.pop("oracle_account_number")
+            acct_sub_group = item.pop("oracle_account_sub_group")
             contract = Contract(**item)
             for ld in lines_data:
+                ld.setdefault("oracle_account_number", acct_number)
+                ld.setdefault("oracle_account_sub_group", acct_sub_group)
                 line = ContractLine(**ld)
                 line.monthly_amount = compute_monthly_amount(
                     line.entered_amount, line.billing_interval, line.period_start, line.period_end
@@ -1182,7 +1285,10 @@ def _seed_recurring_contracts() -> None:
 
             existing = db.query(Contract).filter(
                 Contract.vendor_name == vendor_name,
-                Contract.oracle_account_number == account_number,
+                Contract.oracle_department == oracle_dept,
+                Contract.purchase_order_number.like("PO-REC-%"),
+            ).join(Contract.lines).filter(
+                ContractLine.oracle_account_number == account_number,
             ).first()
             if existing:
                 continue
@@ -1195,13 +1301,13 @@ def _seed_recurring_contracts() -> None:
                 vendor_name=vendor_name,
                 oracle_department=oracle_dept,
                 oracle_department_name=oracle_dept_name,
-                oracle_account_number=account_number,
-                oracle_account_sub_group=sub_group,
                 purchase_order_number=f"PO-REC-{po_counter:04d}",
                 status=ContractStatus.ACTIVE,
             )
             line = ContractLine(
                 po_line_number=1,
+                oracle_account_number=account_number,
+                oracle_account_sub_group=sub_group,
                 period_start=period_start,
                 period_end=period_end,
                 billing_interval=BillingInterval.MONTHLY,
@@ -1262,13 +1368,13 @@ def _seed_recurring_contracts() -> None:
                 vendor_name=vendor_name,
                 oracle_department=oracle_dept,
                 oracle_department_name=oracle_dept_name,
-                oracle_account_number=account_number,
-                oracle_account_sub_group=sub_group,
                 purchase_order_number=f"PO-REC-{po_counter:04d}",
                 status=ContractStatus.ACTIVE,
             )
             line = ContractLine(
                 po_line_number=1,
+                oracle_account_number=account_number,
+                oracle_account_sub_group=sub_group,
                 period_start=period_start,
                 period_end=period_end,
                 billing_interval=BillingInterval.MONTHLY,
@@ -1303,9 +1409,12 @@ def _backfill_workday_renewal() -> None:
         if has_coverage:
             return
 
+        first_line = workday.lines[0] if workday.lines else None
         renewal = ContractLine(
             contract_id=workday.id,
             po_line_number=2,
+            oracle_account_number=first_line.oracle_account_number if first_line else "ACC-5510",
+            oracle_account_sub_group=first_line.oracle_account_sub_group if first_line else "Software Licenses",
             period_start=date(2027, 4, 1),
             period_end=date(2027, 12, 31),
             billing_interval=BillingInterval.MONTHLY,
@@ -1627,6 +1736,70 @@ def _backfill_spend_activities() -> None:
             ))
             added = True
         if added:
+            db.commit()
+    finally:
+        db.close()
+
+
+def _seed_saas_contract_account_ids() -> None:
+    """Seed account_numbers + activity_ids for SaaS contracts that have no spend history.
+
+    GitHub (ACC-6401), Workday (ACC-5510), and Zoom (ACC-6345) are missing from
+    account_numbers entirely.  Salesforce (ACC-6385) already has an account record
+    but no activity_id for dept 1200.  All four are Equipment & Software Expense /
+    Software Maintenance and map to project OPEX-SAAS.
+
+    Idempotent — skips any record that already exists.
+    """
+    from src.models.reference import ActivityId, AccountNumber, ProjectId
+
+    # (dept_code, account_number, vendor_hint, activity_id)
+    SAAS_CONTRACTS = [
+        ("1100", "ACC-6401", "GitHub",      "AOPEX-0000104"),
+        ("1200", "ACC-6385", "Salesforce",  "AOPEX-0000105"),
+        ("1600", "ACC-5510", "Workday",     "AOPEX-0000106"),
+        ("1600", "ACC-6345", "Zoom",        "AOPEX-0000107"),
+    ]
+    SAAS_ACCOUNTS = ["ACC-6401", "ACC-5510", "ACC-6345"]   # ACC-6385 already exists
+
+    db = SessionLocal()
+    try:
+        existing_accts = {a.account_number for a in db.query(AccountNumber).all()}
+        existing_acts  = {a.activity_id for a in db.query(ActivityId).all()}
+        proj_map       = {p.project_name: p.id for p in db.query(ProjectId).all()}
+
+        changed = False
+
+        # 1. Add missing account_number records
+        for acct_num in SAAS_ACCOUNTS:
+            if acct_num not in existing_accts:
+                db.add(AccountNumber(
+                    account_number=acct_num,
+                    account_desc="Software Maintenance — Equipment & Software Expense / Equipment & Software Expense",
+                    account_group="Equipment & Software Expense",
+                    account_sub_group="Software Maintenance",
+                    cost_element="Equipment & Software Expense",
+                ))
+                changed = True
+        if changed:
+            db.commit()
+
+        # Rebuild account map after potential inserts
+        acct_map = {a.account_number: a.id for a in db.query(AccountNumber).all()}
+
+        # 2. Add missing activity_id records
+        for dept_code, acct_num, vendor_hint, act_id in SAAS_CONTRACTS:
+            if act_id not in existing_acts:
+                db.add(ActivityId(
+                    activity_id=act_id,
+                    activity_id_desc=f"Software Maintenance / {vendor_hint}",
+                    department_code=dept_code,
+                    account_id=acct_map.get(acct_num),
+                    project_id=proj_map.get("OPEX-SAAS"),
+                ))
+                changed = True
+
+        if changed:
             db.commit()
     finally:
         db.close()

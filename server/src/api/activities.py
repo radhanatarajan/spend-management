@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 
@@ -38,21 +40,39 @@ def list_activities(department_code: str | None = None, db: Session = Depends(ge
     return [ActivityIdOut.from_orm_with_joins(r) for r in rows]
 
 
+_EXPENSE_PREFIX = {"capex": "ACAPEX", "opex": "AOPEX"}
+
+
+def _next_activity_id(db: Session, expense_type: str | None = None) -> str:
+    """Generate the next PREFIX-NNNNNNN id from the highest numeric suffix across all activity IDs."""
+    prefix = _EXPENSE_PREFIX.get((expense_type or "opex").lower(), "AOPEX")
+    all_ids = [r.activity_id for r in db.query(ActivityId.activity_id).all()]
+    max_num = 0
+    for aid in all_ids:
+        m = re.match(r'^[A-Z]+-(\d+)$', aid)
+        if m:
+            max_num = max(max_num, int(m.group(1)))
+    return f"{prefix}-{max_num + 1:07d}"
+
+
 @router.post("", response_model=ActivityIdOut, status_code=201)
 def create_activity(body: ActivityIdCreate, db: Session = Depends(get_db), current_user: User = Depends(require_write)):
-    if db.get(ActivityId, body.activity_id):
+    activity_id = body.activity_id or _next_activity_id(db, body.expense_type)
+    if db.get(ActivityId, activity_id):
         raise HTTPException(status_code=409, detail="Activity ID already exists")
-    obj = ActivityId(**body.model_dump())
+    data = {k: v for k, v in body.model_dump().items() if k != "expense_type"}
+    data["activity_id"] = activity_id
+    obj = ActivityId(**data)
     db.add(obj)
     db.add(ReferenceAudit(
         table_name="activity_ids",
-        record_id=body.activity_id,
+        record_id=activity_id,
         event_type="CREATED",
         changes={},
         changed_by=current_user.email,
     ))
     db.commit()
-    return ActivityIdOut.from_orm_with_joins(_get_or_404(body.activity_id, db))
+    return ActivityIdOut.from_orm_with_joins(_get_or_404(activity_id, db))
 
 
 @router.put("/{activity_id}", response_model=ActivityIdOut)

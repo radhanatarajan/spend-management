@@ -32,8 +32,6 @@ class Contract(Base):
 
     oracle_department: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     oracle_department_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    oracle_account_number: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
-    oracle_account_sub_group: Mapped[str] = mapped_column(String(255), nullable=False)
 
     purchase_order_number: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
 
@@ -59,6 +57,9 @@ class ContractLine(Base):
     contract_id: Mapped[int] = mapped_column(Integer, ForeignKey("contracts.id"), nullable=False, index=True)
 
     po_line_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    oracle_account_number: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    oracle_account_sub_group: Mapped[str] = mapped_column(String(255), nullable=False)
+    activity_id: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     period_start: Mapped[date] = mapped_column(Date, nullable=False)
     period_end: Mapped[date] = mapped_column(Date, nullable=False)
 
