@@ -60,24 +60,35 @@ def client():
 
 
 def make_contract(db, vendor="Acme", po="PO-001", lines=None, **kwargs):
-    """Create and persist a Contract with optional lines."""
+    """Create and persist a Contract with optional lines.
+
+    Account fields (oracle_account_number, oracle_account_sub_group, activity_id)
+    now live on ContractLine. Pass them per-line in the `lines` list. The helper
+    injects defaults for any line that omits them.
+    """
     from datetime import date
     from decimal import Decimal
     from src.schemas.contract import compute_monthly_amount
+
+    # Account fields are no longer on Contract — filter them out of kwargs
+    # in case callers pass them for backward compatibility
+    kwargs.pop("oracle_account_number", None)
+    kwargs.pop("oracle_account_sub_group", None)
+    kwargs.pop("activity_id", None)
 
     defaults = dict(
         vendor_name=vendor,
         oracle_department="1100",
         oracle_department_name="Engineering",
-        oracle_account_number="ACC-0001",
-        oracle_account_sub_group="Software Licenses",
         purchase_order_number=po,
         status=ContractStatus.ACTIVE,
     )
     defaults.update(kwargs)
     contract = Contract(**defaults)
 
+    default_line_account = {"oracle_account_number": "ACC-0001", "oracle_account_sub_group": "Software Licenses"}
     for ld in (lines or []):
+        ld = {**default_line_account, **ld}
         line = ContractLine(**ld)
         line.monthly_amount = compute_monthly_amount(
             line.entered_amount, line.billing_interval, line.period_start, line.period_end

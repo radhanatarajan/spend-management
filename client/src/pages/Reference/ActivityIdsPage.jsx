@@ -6,8 +6,16 @@ import {
   useDepartments, useProjects, useUpdateActivity,
 } from "../../data/reference";
 
+const EXPENSE_TYPES = [
+  { value: "opex",  label: "Operational Expenditure (AOPEX)" },
+  { value: "capex", label: "Capital Expenditure (ACAPEX)" },
+];
+
+const EXPENSE_PREFIX = { opex: "AOPEX", capex: "ACAPEX" };
+
 const EMPTY_FORM = {
   activity_id: "",
+  expense_type: "opex",
   activity_id_desc: "",
   department_code: "",
   cost_element_filter: "",
@@ -53,13 +61,15 @@ function ActivityForm({ initial = EMPTY_FORM, isEdit, onSubmit, onClose, isPendi
 
   function handleSubmit(e) {
     e.preventDefault();
-    onSubmit({
-      activity_id: form.activity_id,
+    const payload = {
       activity_id_desc: form.activity_id_desc || null,
       department_code: form.department_code || null,
       account_id: form.account_id ? parseInt(form.account_id, 10) : null,
       project_id: form.project_id ? parseInt(form.project_id, 10) : null,
-    });
+    };
+    if (isEdit) payload.activity_id = form.activity_id;
+    else payload.expense_type = form.expense_type;
+    onSubmit(payload);
   }
 
   const sel = "w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500";
@@ -68,16 +78,21 @@ function ActivityForm({ initial = EMPTY_FORM, isEdit, onSubmit, onClose, isPendi
   return (
     <form onSubmit={handleSubmit}>
       <div className="space-y-3">
-        {!isEdit && (
+        {isEdit && (
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Activity ID</label>
-            <input
-              required
-              className={inp}
-              value={form.activity_id}
-              onChange={e => set("activity_id", e.target.value)}
-              placeholder="e.g. AOPEX-0000001"
-            />
+            <input readOnly className={`${inp} bg-gray-50 text-gray-500 cursor-default`} value={form.activity_id} />
+          </div>
+        )}
+        {!isEdit && (
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Expense Type *</label>
+            <select required className={sel} value={form.expense_type} onChange={e => set("expense_type", e.target.value)}>
+              {EXPENSE_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+            <p className="text-xs text-gray-400 mt-1">
+              ID will be auto-generated with prefix <span className="font-mono font-medium text-gray-600">{EXPENSE_PREFIX[form.expense_type]}-</span>
+            </p>
           </div>
         )}
         <div>

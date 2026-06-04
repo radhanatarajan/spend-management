@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from src.core.dependencies import get_db, require_write, require_any
 from src.models.contract import Contract, ContractLine, ContractAudit, ContractLineAudit, BillingInterval, ContractStatus
-from src.models.reference import AccountNumber
+from src.models.reference import AccountNumber, ActivityId
 from src.models.user import User
 from src.schemas.contract import (
     ContractCreate, ContractUpdate, ContractOut,
@@ -54,15 +54,6 @@ def _serialize_val(v):
     return v
 
 
-def _group_key(contract: Contract) -> tuple:
-    return (
-        contract.vendor_name,
-        contract.oracle_department,
-        contract.oracle_account_number,
-        contract.purchase_order_number,
-    )
-
-
 def _is_multi_year_lines(lines: list[ContractLine]) -> bool:
     """True when the lines form a consecutive chain (each line starts the month after the previous ends)."""
     sorted_lines = sorted(lines, key=lambda l: l.period_start)
@@ -97,121 +88,110 @@ def get_contract_report(
         for a in db.execute(select(AccountNumber)).scalars().all()
     }
 
-    # Group contracts by (vendor, dept, account, PO) — same logic as ContractsPage
-    groups: dict[tuple, list[Contract]] = {}
-    for c in all_contracts:
-        groups.setdefault(_group_key(c), []).append(c)
-
-    # Build report groups — all groups, not just multi-year
-    report_groups = []
-    for key, contracts in groups.items():
-        merged_lines = [line for c in contracts for line in c.lines]
-        if not merged_lines:
-            continue
-        sorted_merged = sorted(merged_lines, key=lambda l: l.period_start)
-        # Status from the contract that owns the last line
-        last_contract_id = sorted_merged[-1].contract_id
-        last_contract = next((c for c in contracts if c.id == last_contract_id), contracts[0])
-        report_groups.append({
-            "representative": contracts[0],
-            "lines": sorted_merged,
-            "status": last_contract.status,
-            "is_multi_year": _is_multi_year_lines(merged_lines),
-        })
-    report_groups.sort(key=lambda g: g["representative"].vendor_name)
+    # Build (dept_code, account_number) → activity_id lookup
+    activity_lookup: dict[tuple[str, str], str] = {}
+    for act in db.execute(
+        select(ActivityId).options(selectinload(ActivityId.account))
+    ).scalars().all():
+        if act.department_code and act.account and act.account.account_number:
+            activity_lookup[(act.department_code, act.account.account_number)] = act.activity_id
 
     # Build fiscal-year month list
     fy_months = fiscal_year_months(fiscal_year)  # [(year, month), ...]
     mk_str = [f"{y:04d}-{m:02d}" for y, m in fy_months]
     mk_labels = [month_label(y, m) for y, m in fy_months]
 
-    # Available fiscal years across all group lines
+    # Available fiscal years across all contract lines
     fy_set: set[int] = set()
-    for g in report_groups:
-        for line in g["lines"]:
-            s_fy = month_to_fy(line.period_start.year, line.period_start.month)
-            e_fy = month_to_fy(line.period_end.year, line.period_end.month)
-            for fy in range(s_fy, e_fy + 1):
+    for c in all_contracts:
+        for line in c.lines:
+            for fy in range(
+                month_to_fy(line.period_start.year, line.period_start.month),
+                month_to_fy(line.period_end.year, line.period_end.month) + 1,
+            ):
                 fy_set.add(fy)
     available_fys = sorted(fy_set)
 
-    # Build report rows
+    # Build report rows — one row per (contract, oracle_account_number) pair
     rows: list[ContractReportRow] = []
-    for g in report_groups:
-        contract = g["representative"]
-        sorted_lines = g["lines"]
-        group_status = g["status"]
-        last_line = sorted_lines[-1]
-        last_line_end_int = last_line.period_end.year * 100 + last_line.period_end.month
-        first_line_start_int = sorted_lines[0].period_start.year * 100 + sorted_lines[0].period_start.month
+    for contract in all_contracts:
+        if not contract.lines:
+            continue
 
-        monthly_amounts: dict[str, Decimal | None] = {}
-        monthly_assumed: dict[str, bool] = {}
+        # Group this contract's lines by account number
+        account_lines: dict[str, list[ContractLine]] = {}
+        for line in contract.lines:
+            account_lines.setdefault(line.oracle_account_number, []).append(line)
 
-        for (y, m), key in zip(fy_months, mk_str):
-            mk_int = y * 100 + m
+        for acct_num, acct_line_list in sorted(account_lines.items()):
+            sorted_lines = sorted(acct_line_list, key=lambda l: l.period_start)
+            last_line = sorted_lines[-1]
+            last_line_end_int = last_line.period_end.year * 100 + last_line.period_end.month
+            first_line_start_int = sorted_lines[0].period_start.year * 100 + sorted_lines[0].period_start.month
 
-            # Month is before the contract ever started — no data, no assumption
-            if mk_int < first_line_start_int:
-                monthly_amounts[key] = None
-                monthly_assumed[key] = False
-                continue
+            monthly_amounts: dict[str, Decimal | None] = {}
+            monthly_assumed: dict[str, bool] = {}
 
-            # Find a PO line that covers this month
-            amount = None
-            for line in sorted_lines:
-                s_int = line.period_start.year * 100 + line.period_start.month
-                e_int = line.period_end.year * 100 + line.period_end.month
-                if s_int <= mk_int <= e_int:
-                    amount = line.monthly_amount
-                    break
+            for (y, m), key in zip(fy_months, mk_str):
+                mk_int = y * 100 + m
 
-            if amount is not None:
-                monthly_amounts[key] = amount
-                monthly_assumed[key] = False
-            elif mk_int > last_line_end_int:
-                # Beyond last signed PO line → 100% renewal assumption at last line's rate
-                # Only for active/pending contracts; expired/cancelled don't renew
-                if group_status in (ContractStatus.ACTIVE, ContractStatus.PENDING):
-                    monthly_amounts[key] = last_line.monthly_amount
-                    monthly_assumed[key] = True
+                if mk_int < first_line_start_int:
+                    monthly_amounts[key] = None
+                    monthly_assumed[key] = False
+                    continue
+
+                amount = None
+                for line in sorted_lines:
+                    s_int = line.period_start.year * 100 + line.period_start.month
+                    e_int = line.period_end.year * 100 + line.period_end.month
+                    if s_int <= mk_int <= e_int:
+                        amount = line.monthly_amount
+                        break
+
+                if amount is not None:
+                    monthly_amounts[key] = amount
+                    monthly_assumed[key] = False
+                elif mk_int > last_line_end_int:
+                    if contract.status in (ContractStatus.ACTIVE, ContractStatus.PENDING):
+                        monthly_amounts[key] = last_line.monthly_amount
+                        monthly_assumed[key] = True
+                    else:
+                        monthly_amounts[key] = None
+                        monthly_assumed[key] = False
                 else:
                     monthly_amounts[key] = None
                     monthly_assumed[key] = False
-            else:
-                # Gap between lines (shouldn't happen in clean data, but handle gracefully)
-                monthly_amounts[key] = None
-                monthly_assumed[key] = False
 
-        fy_total = sum(v for v in monthly_amounts.values() if v is not None)
-        assumed_total = sum(
-            v for k, v in monthly_amounts.items()
-            if v is not None and monthly_assumed.get(k)
-        )
+            fy_total = sum(v for v in monthly_amounts.values() if v is not None)
+            assumed_total = sum(
+                v for k, v in monthly_amounts.items()
+                if v is not None and monthly_assumed.get(k)
+            )
 
-        # Only include contracts that have any coverage (actual or assumed) in this FY
-        if fy_total == 0:
-            continue
+            if fy_total == 0:
+                continue
 
-        acct = acct_ref.get(contract.oracle_account_number)
-        rows.append(ContractReportRow(
-            id=contract.id,
-            vendor_name=contract.vendor_name,
-            oracle_department_name=contract.oracle_department_name,
-            oracle_account_number=contract.oracle_account_number,
-            oracle_account_sub_group=contract.oracle_account_sub_group,
-            account_group=acct.account_group if acct else "",
-            account_sub_group=acct.account_sub_group or contract.oracle_account_sub_group if acct else contract.oracle_account_sub_group,
-            cost_element=acct.cost_element if acct else "",
-            purchase_order_number=contract.purchase_order_number,
-            status=group_status,
-            num_lines=len(sorted_lines),
-            is_multi_year=g["is_multi_year"],
-            monthly_amounts=monthly_amounts,
-            monthly_assumed=monthly_assumed,
-            fiscal_year_total=Decimal(str(fy_total)),
-            assumed_total=Decimal(str(assumed_total)),
-        ))
+            acct = acct_ref.get(acct_num)
+            first_line_sub_group = sorted_lines[0].oracle_account_sub_group
+            rows.append(ContractReportRow(
+                id=contract.id,
+                vendor_name=contract.vendor_name,
+                oracle_department_name=contract.oracle_department_name,
+                oracle_account_number=acct_num,
+                oracle_account_sub_group=first_line_sub_group,
+                account_group=acct.account_group if acct else "",
+                account_sub_group=acct.account_sub_group or first_line_sub_group if acct else first_line_sub_group,
+                cost_element=acct.cost_element if acct else "",
+                activity_id=next((l.activity_id for l in sorted_lines if l.activity_id), None) or activity_lookup.get((contract.oracle_department, acct_num)),
+                purchase_order_number=contract.purchase_order_number,
+                status=contract.status,
+                num_lines=len(sorted_lines),
+                is_multi_year=_is_multi_year_lines(sorted_lines),
+                monthly_amounts=monthly_amounts,
+                monthly_assumed=monthly_assumed,
+                fiscal_year_total=Decimal(str(fy_total)),
+                assumed_total=Decimal(str(assumed_total)),
+            ))
 
     # Monthly totals across all rows
     monthly_totals: dict[str, Decimal] = {}
@@ -357,8 +337,6 @@ def create_contract(
         description=body.description,
         oracle_department=body.oracle_department,
         oracle_department_name=body.oracle_department_name,
-        oracle_account_number=body.oracle_account_number,
-        oracle_account_sub_group=body.oracle_account_sub_group,
         purchase_order_number=body.purchase_order_number,
         status=body.status,
     )

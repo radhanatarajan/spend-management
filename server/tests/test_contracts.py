@@ -203,18 +203,23 @@ class TestListContracts:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestCreateContract:
+    _LINE_DEFAULTS = dict(
+        oracle_account_number="ACC-6401",
+        oracle_account_sub_group="Software Licenses",
+    )
+
     def _payload(self, **overrides):
         base = dict(
             vendor_name="GitHub",
             oracle_department="1100",
             oracle_department_name="Engineering",
-            oracle_account_number="ACC-6401",
-            oracle_account_sub_group="Software Licenses",
             purchase_order_number="PO-91200",
             status="active",
             lines=[],
         )
         base.update(overrides)
+        # Inject account defaults into any lines that omit them
+        base["lines"] = [{**self._LINE_DEFAULTS, **ln} for ln in base["lines"]]
         return base
 
     def test_create_minimal_contract(self, admin_client):
@@ -370,6 +375,8 @@ class TestAddLine:
     def _line_payload(self, **overrides):
         base = dict(
             po_line_number=1,
+            oracle_account_number="ACC-0001",
+            oracle_account_sub_group="Software Licenses",
             period_start="2026-01-01",
             period_end="2026-12-31",
             billing_interval="monthly",
@@ -567,9 +574,8 @@ class TestContractReport:
         assert isinstance(row["account_sub_group"], str)
         assert isinstance(row["cost_element"], str)
 
-    def test_cross_contract_grouping_detected_as_multi_year(self, client, db):
-        # Two separate Contract DB records, same vendor+dept+account+PO, consecutive lines.
-        # Each record has only 1 line — multi-year only detectable via grouping.
+    def test_multi_year_contract_detected_via_lines(self, client, db):
+        # Single contract with 2 consecutive lines spanning 2 years — is_multi_year=True
         line1 = dict(
             po_line_number=1,
             period_start=date(2026, 5, 1), period_end=date(2027, 4, 30),
@@ -580,13 +586,13 @@ class TestContractReport:
             period_start=date(2027, 5, 1), period_end=date(2028, 4, 30),
             billing_interval=BillingInterval.MONTHLY, entered_amount=Decimal("11000.00"),
         )
-        make_contract(db, vendor="Zoom", po="PO-ZM", lines=[line1])
-        make_contract(db, vendor="Zoom", po="PO-ZM", lines=[line2])
+        make_contract(db, vendor="Zoom", po="PO-ZM", lines=[line1, line2])
         body = client.get("/api/contracts/report?fiscal_year=2027").json()
         assert len(body["rows"]) == 1
         row = body["rows"][0]
         assert row["vendor_name"] == "Zoom"
         assert row["num_lines"] == 2
+        assert row["is_multi_year"] is True
         # Jan-Apr 2027 covered by line1 at 10000; May-Dec 2027 covered by line2 at 11000
         assert float(row["monthly_amounts"]["2027-01"]) == 10000.00
         assert float(row["monthly_amounts"]["2027-06"]) == 11000.00
@@ -626,8 +632,6 @@ class TestContractAudit:
             vendor_name="Adobe",
             oracle_department="1100",
             oracle_department_name="Engineering",
-            oracle_account_number="ACC-1234",
-            oracle_account_sub_group="Software",
             purchase_order_number="PO-ADO-001",
             status="active",
         )
@@ -696,7 +700,8 @@ class TestContractAudit:
     def test_add_line_logged(self, admin_client, db):
         c = make_contract(db)
         line_payload = dict(
-            po_line_number=1, period_start="2026-01-01", period_end="2026-12-31",
+            po_line_number=1, oracle_account_number="ACC-0001", oracle_account_sub_group="Software Licenses",
+            period_start="2026-01-01", period_end="2026-12-31",
             billing_interval="monthly", entered_amount="1000.00",
         )
         r = admin_client.post(f"/api/contracts/{c.id}/lines", json=line_payload)
@@ -755,7 +760,8 @@ class TestContractAudit:
     def test_contract_audit_has_no_line_events(self, admin_client, db):
         c = make_contract(db)
         admin_client.post(f"/api/contracts/{c.id}/lines", json=dict(
-            po_line_number=1, period_start="2026-01-01", period_end="2026-12-31",
+            po_line_number=1, oracle_account_number="ACC-0001", oracle_account_sub_group="Software Licenses",
+            period_start="2026-01-01", period_end="2026-12-31",
             billing_interval="monthly", entered_amount="500.00",
         ))
         # contract_audit should be empty — line event went to contract_lines_audit
@@ -768,15 +774,14 @@ class TestContractAudit:
 
 class TestContractAuditReport:
     _LINE = dict(
-        po_line_number=1, period_start="2026-01-01", period_end="2026-12-31",
+        po_line_number=1, oracle_account_number="ACC-0001", oracle_account_sub_group="Software Licenses",
+        period_start="2026-01-01", period_end="2026-12-31",
         billing_interval="monthly", entered_amount="1000.00",
     )
     _CONTRACT = dict(
         vendor_name="Contoso",
         oracle_department="1100",
         oracle_department_name="Engineering",
-        oracle_account_number="ACC-9999",
-        oracle_account_sub_group="SaaS",
         purchase_order_number="PO-C-001",
         status="active",
     )

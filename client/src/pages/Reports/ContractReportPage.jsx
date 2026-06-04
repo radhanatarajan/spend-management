@@ -90,6 +90,9 @@ function MonthlyTable({ report, rows }) {
               <th className="px-3 py-3 text-left font-medium text-gray-500 uppercase tracking-wide min-w-[100px]">
                 Account
               </th>
+              <th className="px-3 py-3 text-left font-medium text-gray-500 uppercase tracking-wide min-w-[130px]">
+                Activity ID
+              </th>
               {month_labels.map((lbl, i) => (
                 <th key={month_keys[i]} className="px-3 py-3 text-right font-medium text-gray-500 uppercase tracking-wide min-w-[88px] whitespace-nowrap">
                   {lbl}
@@ -117,6 +120,7 @@ function MonthlyTable({ report, rows }) {
                 </td>
                 <td className="px-3 py-2.5 text-gray-600 align-top">{row.oracle_department_name}</td>
                 <td className="px-3 py-2.5 text-gray-500 font-mono align-top">{row.oracle_account_number}</td>
+                <td className="px-3 py-2.5 text-gray-500 font-mono align-top text-[11px]">{row.activity_id ?? "—"}</td>
                 {month_keys.map((key) => {
                   const amt = row.monthly_amounts[key];
                   const assumed = row.monthly_assumed[key];
@@ -140,7 +144,7 @@ function MonthlyTable({ report, rows }) {
           <tfoot>
             <tr className="bg-gray-50 border-t-2 border-gray-200 font-semibold">
               <td className="sticky left-0 z-10 bg-gray-50 px-4 py-2.5 text-gray-700">Total</td>
-              <td className="px-3 py-2.5" colSpan={2} />
+              <td className="px-3 py-2.5" colSpan={3} />
               {month_keys.map((key) => (
                 <td key={key} className="px-3 py-2.5 text-right font-mono text-gray-900">
                   {filteredTotals[key] > 0 ? fmtK(filteredTotals[key]) : "–"}
@@ -167,25 +171,64 @@ export default function ContractReportPage() {
   const [selAccountGroups,    setSelAccountGroups]    = useState([]);
   const [selAccountSubGroups, setSelAccountSubGroups] = useState([]);
   const [selCostElements,     setSelCostElements]     = useState([]);
+  const [selActivityIds,      setSelActivityIds]      = useState([]);
 
   const { data: report, isLoading, isError } = useContractReport(fiscalYear);
 
   // Once data loads, seed the FY selector with available years
   const availableFYs = report?.available_fiscal_years ?? [];
 
+  // Cascading derived options: account groups narrow when a cost element is selected
+  const availableAccountGroups = useMemo(() => {
+    if (!report) return [];
+    const base = selCostElements.length
+      ? report.rows.filter((r) => selCostElements.includes(r.cost_element))
+      : report.rows;
+    return [...new Set(base.map((r) => r.account_group).filter(Boolean))].sort();
+  }, [report, selCostElements]);
+
+  const effectiveSelAccountGroups = useMemo(
+    () => selAccountGroups.filter((g) => availableAccountGroups.includes(g)),
+    [selAccountGroups, availableAccountGroups]
+  );
+
+  const availableAccountSubGroups = useMemo(() => {
+    if (!report) return [];
+    const base = selCostElements.length
+      ? report.rows.filter((r) => selCostElements.includes(r.cost_element))
+      : report.rows;
+    const base2 = effectiveSelAccountGroups.length
+      ? base.filter((r) => effectiveSelAccountGroups.includes(r.account_group))
+      : base;
+    return [...new Set(base2.map((r) => r.account_sub_group).filter(Boolean))].sort();
+  }, [report, selCostElements, effectiveSelAccountGroups]);
+
+  const effectiveSelAccountSubGroups = useMemo(
+    () => selAccountSubGroups.filter((s) => availableAccountSubGroups.includes(s)),
+    [selAccountSubGroups, availableAccountSubGroups]
+  );
+
+  const availableActivityIds = useMemo(() => {
+    if (!report) return [];
+    const ids = [...new Set(report.rows.map((r) => r.activity_id).filter(Boolean))].sort();
+    const hasUnassigned = report.rows.some((r) => !r.activity_id);
+    return hasUnassigned ? ["(Unassigned)", ...ids] : ids;
+  }, [report]);
+
   // Client-side filtering
   const filteredRows = useMemo(() => {
     if (!report) return [];
     return report.rows.filter((r) => {
-      if (selVendors.length          && !selVendors.includes(r.vendor_name))              return false;
-      if (selDepts.length            && !selDepts.includes(r.oracle_department_name))      return false;
-      if (selStatus.length           && !selStatus.includes(r.status))                    return false;
-      if (selAccountGroups.length    && !selAccountGroups.includes(r.account_group))      return false;
-      if (selAccountSubGroups.length && !selAccountSubGroups.includes(r.account_sub_group)) return false;
-      if (selCostElements.length     && !selCostElements.includes(r.cost_element))        return false;
+      if (selVendors.length                    && !selVendors.includes(r.vendor_name))                        return false;
+      if (selDepts.length                      && !selDepts.includes(r.oracle_department_name))                return false;
+      if (selStatus.length                     && !selStatus.includes(r.status))                              return false;
+      if (effectiveSelAccountGroups.length     && !effectiveSelAccountGroups.includes(r.account_group))       return false;
+      if (effectiveSelAccountSubGroups.length  && !effectiveSelAccountSubGroups.includes(r.account_sub_group)) return false;
+      if (selCostElements.length               && !selCostElements.includes(r.cost_element))                  return false;
+      if (selActivityIds.length                && !selActivityIds.includes(r.activity_id ?? "(Unassigned)"))   return false;
       return true;
     });
-  }, [report, selVendors, selDepts, selStatus, selAccountGroups, selAccountSubGroups, selCostElements]);
+  }, [report, selVendors, selDepts, selStatus, effectiveSelAccountGroups, effectiveSelAccountSubGroups, selCostElements, selActivityIds]);
 
   // KPIs
   const numContracts   = filteredRows.length;
@@ -240,15 +283,15 @@ export default function ContractReportPage() {
             />
             <DropdownSlicer
               title="Account Group"
-              options={report.filter_options.account_groups}
-              selected={selAccountGroups}
+              options={availableAccountGroups}
+              selected={effectiveSelAccountGroups}
               onToggle={setSelAccountGroups}
               searchable
             />
             <DropdownSlicer
               title="Account Sub Group"
-              options={report.filter_options.account_sub_groups}
-              selected={selAccountSubGroups}
+              options={availableAccountSubGroups}
+              selected={effectiveSelAccountSubGroups}
               onToggle={setSelAccountSubGroups}
               searchable
             />
@@ -257,6 +300,13 @@ export default function ContractReportPage() {
               options={report.filter_options.cost_elements}
               selected={selCostElements}
               onToggle={setSelCostElements}
+              searchable
+            />
+            <DropdownSlicer
+              title="Activity ID"
+              options={availableActivityIds}
+              selected={selActivityIds}
+              onToggle={setSelActivityIds}
               searchable
             />
           </div>

@@ -74,7 +74,8 @@ class ProjectIdOut(BaseModel):
 # ── Activity IDs ──────────────────────────────────────────────────────────────
 
 class ActivityIdCreate(BaseModel):
-    activity_id: str
+    activity_id: str | None = None      # auto-generated if omitted
+    expense_type: str | None = None     # "capex" → ACAPEX prefix, "opex" → AOPEX prefix
     activity_id_desc: str | None = None
     department_code: str | None = None
     account_id: int | None = None

@@ -43,6 +43,9 @@ def compute_monthly_amount(entered: Decimal, interval: BillingInterval, start: d
 
 class ContractLineCreate(BaseModel):
     po_line_number: int
+    oracle_account_number: str
+    oracle_account_sub_group: str
+    activity_id: str | None = None
     period_start: date
     period_end: date
     billing_interval: BillingInterval = BillingInterval.MONTHLY
@@ -52,6 +55,9 @@ class ContractLineCreate(BaseModel):
 
 class ContractLineUpdate(BaseModel):
     po_line_number: int | None = None
+    oracle_account_number: str | None = None
+    oracle_account_sub_group: str | None = None
+    activity_id: str | None = None
     period_start: date | None = None
     period_end: date | None = None
     billing_interval: BillingInterval | None = None
@@ -63,6 +69,9 @@ class ContractLineOut(BaseModel):
     id: int
     contract_id: int
     po_line_number: int
+    oracle_account_number: str
+    oracle_account_sub_group: str
+    activity_id: str | None
     period_start: date
     period_end: date
     billing_interval: BillingInterval
@@ -92,8 +101,6 @@ class ContractCreate(BaseModel):
     description: str | None = None
     oracle_department: str
     oracle_department_name: str
-    oracle_account_number: str
-    oracle_account_sub_group: str
     purchase_order_number: str
     status: ContractStatus = ContractStatus.ACTIVE
     lines: list[ContractLineCreate] = []
@@ -104,8 +111,6 @@ class ContractUpdate(BaseModel):
     description: str | None = None
     oracle_department: str | None = None
     oracle_department_name: str | None = None
-    oracle_account_number: str | None = None
-    oracle_account_sub_group: str | None = None
     purchase_order_number: str | None = None
     status: ContractStatus | None = None
 
@@ -116,8 +121,6 @@ class ContractOut(BaseModel):
     description: str | None
     oracle_department: str
     oracle_department_name: str
-    oracle_account_number: str
-    oracle_account_sub_group: str
     purchase_order_number: str
     status: ContractStatus
     created_at: datetime
@@ -153,6 +156,7 @@ class ContractReportRow(BaseModel):
     monthly_assumed: dict[str, bool]
     fiscal_year_total: Decimal
     assumed_total: Decimal   # portion of fiscal_year_total that is assumed
+    activity_id: str | None = None
 
 
 class ContractReportOut(BaseModel):
