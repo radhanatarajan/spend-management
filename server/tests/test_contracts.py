@@ -549,6 +549,23 @@ class TestContractReport:
         opts = body["filter_options"]
         assert "Zoom" in opts["vendors"]
         assert "active" in opts["statuses"]
+        # GL dimension keys always present (may be empty if no matching account_numbers rows)
+        assert "account_groups" in opts
+        assert "account_sub_groups" in opts
+        assert "cost_elements" in opts
+
+    def test_report_row_has_gl_dimension_fields(self, client, db):
+        make_contract(db, vendor="Zoom", po="PO-Z", lines=[LINE_Y1, LINE_Y2])
+        rows = client.get("/api/contracts/report?fiscal_year=2026").json()["rows"]
+        assert len(rows) == 1
+        row = rows[0]
+        assert "account_group" in row
+        assert "account_sub_group" in row
+        assert "cost_element" in row
+        # No AccountNumber seed in test DB — fields fall back to empty string
+        assert isinstance(row["account_group"], str)
+        assert isinstance(row["account_sub_group"], str)
+        assert isinstance(row["cost_element"], str)
 
     def test_cross_contract_grouping_detected_as_multi_year(self, client, db):
         # Two separate Contract DB records, same vendor+dept+account+PO, consecutive lines.
@@ -743,3 +760,86 @@ class TestContractAudit:
         ))
         # contract_audit should be empty — line event went to contract_lines_audit
         assert admin_client.get(f"/api/contracts/audit?contract_id={c.id}").json() == []
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Contract Change Log (reports/audit — unified contract + line events)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestContractAuditReport:
+    _LINE = dict(
+        po_line_number=1, period_start="2026-01-01", period_end="2026-12-31",
+        billing_interval="monthly", entered_amount="1000.00",
+    )
+    _CONTRACT = dict(
+        vendor_name="Contoso",
+        oracle_department="1100",
+        oracle_department_name="Engineering",
+        oracle_account_number="ACC-9999",
+        oracle_account_sub_group="SaaS",
+        purchase_order_number="PO-C-001",
+        status="active",
+    )
+
+    def test_returns_empty_when_no_events(self, admin_client):
+        r = admin_client.get("/api/contracts/reports/audit")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["rows"] == []
+        assert set(body["filter_options"].keys()) == {"vendors", "event_types", "entity_types", "users"}
+
+    def test_includes_contract_events(self, admin_client):
+        admin_client.post("/api/contracts", json=self._CONTRACT)
+        r = admin_client.get("/api/contracts/reports/audit")
+        assert r.status_code == 200
+        rows = r.json()["rows"]
+        assert len(rows) >= 1
+        assert any(row["entity_type"] == "Contract" for row in rows)
+
+    def test_includes_line_events(self, admin_client, db):
+        c = make_contract(db)
+        admin_client.post(f"/api/contracts/{c.id}/lines", json=self._LINE)
+        r = admin_client.get("/api/contracts/reports/audit")
+        rows = r.json()["rows"]
+        assert any(row["entity_type"] == "Line" for row in rows)
+
+    def test_entity_type_for_contract_vs_line(self, admin_client, db):
+        c = make_contract(db)
+        admin_client.put(f"/api/contracts/{c.id}", json={"status": "expired"})
+        admin_client.post(f"/api/contracts/{c.id}/lines", json=self._LINE)
+        rows = admin_client.get("/api/contracts/reports/audit").json()["rows"]
+        entity_types = {row["entity_type"] for row in rows}
+        assert "Contract" in entity_types
+        assert "Line" in entity_types
+
+    def test_po_line_number_present_on_line_events(self, admin_client, db):
+        c = make_contract(db)
+        admin_client.post(f"/api/contracts/{c.id}/lines", json=self._LINE)
+        rows = admin_client.get("/api/contracts/reports/audit").json()["rows"]
+        line_rows = [r for r in rows if r["entity_type"] == "Line"]
+        assert len(line_rows) == 1
+        assert line_rows[0]["po_line_number"] == 1
+
+    def test_po_line_number_null_on_contract_events(self, admin_client):
+        admin_client.post("/api/contracts", json=self._CONTRACT)
+        rows = admin_client.get("/api/contracts/reports/audit").json()["rows"]
+        contract_rows = [r for r in rows if r["entity_type"] == "Contract"]
+        assert all(r["po_line_number"] is None for r in contract_rows)
+
+    def test_sorted_newest_first(self, admin_client, db):
+        c = make_contract(db)
+        admin_client.put(f"/api/contracts/{c.id}", json={"status": "expired"})
+        admin_client.post(f"/api/contracts/{c.id}/lines", json=self._LINE)
+        rows = admin_client.get("/api/contracts/reports/audit").json()["rows"]
+        timestamps = [r["changed_at"] for r in rows]
+        assert timestamps == sorted(timestamps, reverse=True)
+
+    def test_filter_options_populated_after_events(self, admin_client):
+        admin_client.post("/api/contracts", json=self._CONTRACT)
+        fo = admin_client.get("/api/contracts/reports/audit").json()["filter_options"]
+        assert "Contoso" in fo["vendors"]
+        assert "CREATED" in fo["event_types"]
+        assert "Contract" in fo["entity_types"]
+
+    def test_requires_auth(self, client):
+        assert client.get("/api/contracts/reports/audit").status_code == 401

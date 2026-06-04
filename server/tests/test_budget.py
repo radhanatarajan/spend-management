@@ -623,6 +623,46 @@ class TestCostElements:
         assert elements.count("Salaries") == 1
 
 
+class TestAccountGroups:
+    def test_returns_empty_list_when_no_spend(self, admin_client):
+        resp = admin_client.get("/api/budget/account-groups")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_returns_distinct_groups(self, admin_client, db):
+        for group in ("R&D", "G&A", "R&D"):
+            db.add(make_spend(oracle_account_group=group))
+        db.commit()
+
+        resp = admin_client.get("/api/budget/account-groups")
+        groups = resp.json()
+        assert groups == sorted(set(groups))
+        assert groups.count("R&D") == 1
+
+    def test_requires_auth(self, client):
+        assert client.get("/api/budget/account-groups").status_code == 401
+
+
+class TestAccountSubGroups:
+    def test_returns_empty_list_when_no_spend(self, admin_client):
+        resp = admin_client.get("/api/budget/account-sub-groups")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_returns_distinct_sub_groups(self, admin_client, db):
+        for sub in ("Cloud Infra", "Salaries", "Cloud Infra"):
+            db.add(make_spend(oracle_account_sub_group=sub))
+        db.commit()
+
+        resp = admin_client.get("/api/budget/account-sub-groups")
+        sub_groups = resp.json()
+        assert sub_groups == sorted(set(sub_groups))
+        assert sub_groups.count("Cloud Infra") == 1
+
+    def test_requires_auth(self, client):
+        assert client.get("/api/budget/account-sub-groups").status_code == 401
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Budget Scenario Audit
 # ══════════════════════════════════════════════════════════════════════════════

@@ -95,9 +95,9 @@ gh api repos/radhanatarajan/spend-management/commits/{sha}/check-runs --jq '.che
 | Password | spend_pass |
 | Schema | spend_management |
 
-**Tables:** `account_numbers`, `activity_ids`, `budget_entries`, `budget_entry_audit`, `budget_nc_config`, `budget_scenarios`, `contract_audit`, `contract_lines`, `contracts`, `departments`, `project_departments`, `project_ids`, `reference_audit`, `spend`, `users`
+**Tables:** `account_numbers`, `activity_ids`, `budget_entries`, `budget_entry_audit`, `budget_nc_config`, `budget_nc_config_audit`, `budget_scenarios`, `budget_scenario_audit`, `contract_audit`, `contract_lines`, `contract_lines_audit`, `contracts`, `departments`, `project_departments`, `project_ids`, `reference_audit`, `spend`, `users`
 
-**Views:** `v_budget_entry_audit`, `v_contract_audit`, `v_reference_audit_accounts`, `v_reference_audit_activities`, `v_reference_audit_departments`, `v_reference_audit_projects`, `v_spend_account_gaps`, `v_spend_activity_gaps`, `v_spend_department_gaps`
+**Views:** `v_budget_entry_audit`, `v_budget_nc_config_audit`, `v_budget_scenario_audit`, `v_contract_audit`, `v_contract_lines_audit`, `v_contracts_enriched`, `v_reference_audit_accounts`, `v_reference_audit_activities`, `v_reference_audit_departments`, `v_reference_audit_projects`, `v_spend_account_gaps`, `v_spend_activity_gaps`, `v_spend_department_gaps`
 
 Connect via Python:
 ```python
@@ -276,6 +276,7 @@ Test credentials (seeded on first `make dev-api`):
 - Helper factories: `make_scenario()`, `make_entry()`, `make_spend()`, `make_contract()`
 - Never mock the DB — tests run against real SQLite via `StaticPool`
 - All tests must pass before pushing
+- Endpoints that query MySQL-only views (e.g. `GET /api/budget/reports/audit` → `v_budget_entry_audit`) cannot be tested in SQLite; cover adjacent logic (the view columns, audit writes) in other tests instead
 
 ---
 
@@ -289,7 +290,9 @@ Test credentials (seeded on first `make dev-api`):
 | Budget Planning — Controllable (contract-seeded) | **Next** |
 | Forecasting (`/forecasting`) | Planned |
 | Spend Report | Done |
-| Contract Report | Done |
-| Budget Change Log | Done |
+| Contract Report (with GL enrichment from `account_numbers`) | Done |
+| Contract Change Log (`/reports/contract-audit`) | Done |
+| Budget Change Log (`/reports/budget-audit`) | Done |
+| Reference Data Management (`/reference/*`) | Done |
 | Forecast Report | Planned |
 | Budget Report | Planned |
