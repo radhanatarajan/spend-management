@@ -133,6 +133,7 @@ class BudgetNcConfigUpdate(BaseModel):
 class DepartmentBudgetRow(BaseModel):
     department_name: str
     department_code: Optional[str] = None
+    account_groups: list[str] = Field(default_factory=list)
     current: QuarterlyAmounts
     current_is_forecast: dict[str, bool] = Field(
         default_factory=dict,

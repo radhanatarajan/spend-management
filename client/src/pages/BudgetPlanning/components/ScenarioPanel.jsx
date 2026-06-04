@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useCreateScenario, useUpdateScenario, useDeleteScenario } from "../../../data/budget/hooks";
 
-export default function ScenarioPanel({ scenarios, selectedId, onSelect, fiscalYear }) {
+export default function ScenarioPanel({ scenarios, selectedId, onSelect, fiscalYear, compact }) {
   const [showCreate, setShowCreate] = useState(false);
   const [showRename, setShowRename] = useState(null);
   const [newName, setNewName] = useState("");
@@ -60,56 +60,92 @@ export default function ScenarioPanel({ scenarios, selectedId, onSelect, fiscalY
     setNewDesc(scenario.description || "");
   }
 
-  return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-gray-400 shrink-0">Scenario:</span>
-          <div className="flex items-center gap-1.5 flex-wrap">
-            {scenarios?.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => onSelect(s.id)}
-                className={`text-xs px-3 py-1.5 rounded-md border transition-colors ${
-                  s.id === selectedId
-                    ? "bg-indigo-600 border-indigo-600 text-white"
-                    : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
-                }`}
-              >
-                {s.name}
-                {s.is_baseline && (
-                  <span className="ml-1.5 text-[10px] opacity-70">baseline</span>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {selected && !selected.is_baseline && (
-            <>
-              <button
-                onClick={() => openRename(selected)}
-                className="text-xs text-gray-500 hover:text-indigo-600 transition-colors"
-              >
-                Rename
-              </button>
-              <button
-                onClick={() => handleDelete(selected.id)}
-                className="text-xs text-red-400 hover:text-red-600 transition-colors"
-              >
-                Delete
-              </button>
-            </>
-          )}
+  const compactControls = (
+    <div className="flex items-center gap-2">
+      <span className="text-xs text-gray-400 shrink-0">Scenario:</span>
+      <select
+        value={selectedId ?? ""}
+        onChange={(e) => onSelect(Number(e.target.value))}
+        className="text-sm border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-300 text-gray-700 bg-white max-w-[220px]"
+      >
+        {scenarios?.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name}{s.is_baseline ? " (baseline)" : ""}
+          </option>
+        ))}
+      </select>
+      {selected && !selected.is_baseline && (
+        <>
           <button
-            onClick={() => { setShowCreate(true); setNewName(""); setNewDesc(""); setCopyFrom(""); }}
-            className="text-xs px-3 py-1.5 rounded-md border border-dashed border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition-colors"
+            onClick={() => openRename(selected)}
+            className="text-xs text-gray-400 hover:text-indigo-600 transition-colors"
           >
-            + New Scenario
+            Rename
           </button>
+          <button
+            onClick={() => handleDelete(selected.id)}
+            className="text-xs text-red-400 hover:text-red-600 transition-colors"
+          >
+            Delete
+          </button>
+        </>
+      )}
+      <button
+        onClick={() => { setShowCreate(true); setNewName(""); setNewDesc(""); setCopyFrom(""); }}
+        className="text-xs px-2.5 py-1 rounded-md border border-dashed border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition-colors whitespace-nowrap"
+      >
+        + New
+      </button>
+    </div>
+  );
+
+  const fullControls = (
+    <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-gray-400 shrink-0">Scenario:</span>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {scenarios?.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => onSelect(s.id)}
+              className={`text-xs px-3 py-1.5 rounded-md border transition-colors ${
+                s.id === selectedId
+                  ? "bg-indigo-600 border-indigo-600 text-white"
+                  : "bg-white border-gray-200 text-gray-600 hover:bg-gray-50"
+              }`}
+            >
+              {s.name}
+              {s.is_baseline && (
+                <span className="ml-1.5 text-[10px] opacity-70">baseline</span>
+              )}
+            </button>
+          ))}
         </div>
       </div>
+      <div className="flex items-center gap-2">
+        {selected && !selected.is_baseline && (
+          <>
+            <button onClick={() => openRename(selected)} className="text-xs text-gray-500 hover:text-indigo-600 transition-colors">Rename</button>
+            <button onClick={() => handleDelete(selected.id)} className="text-xs text-red-400 hover:text-red-600 transition-colors">Delete</button>
+          </>
+        )}
+        <button
+          onClick={() => { setShowCreate(true); setNewName(""); setNewDesc(""); setCopyFrom(""); }}
+          className="text-xs px-3 py-1.5 rounded-md border border-dashed border-indigo-300 text-indigo-600 hover:bg-indigo-50 transition-colors"
+        >
+          + New Scenario
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      {compact ? compactControls : (
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          {fullControls}
+        </div>
+      )}
 
       {/* Create modal */}
       {showCreate && (
@@ -213,6 +249,6 @@ export default function ScenarioPanel({ scenarios, selectedId, onSelect, fiscalY
           </div>
         </div>
       )}
-    </div>
+    </>
   );
 }

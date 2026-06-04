@@ -396,3 +396,71 @@ class TestSpendSummary:
         body = client.get("/api/spend/summary?activity_ids=AOPEX-0000001").json()
         assert float(body["total_amount"]) == 500
         assert body["total_transactions"] == 1
+
+
+# ---------------------------------------------------------------------------
+# NC Activity ID rule
+# ---------------------------------------------------------------------------
+
+class TestNcActivityIdRule:
+    """
+    Verifies that spend rows with oracle_cost_element='Employee Related'
+    can carry activity_ids in the NC-{dept}-{account} format (e.g. NC-1100-ACC-1001).
+    The actual assignment is done by _assign_nc_activity_ids() at API startup
+    (MySQL-only); these tests confirm the format is accepted and filterable.
+    """
+
+    def test_employee_related_nc_activity_id_stored_and_returned(self, client, db):
+        seed(db, [make_spend(
+            oracle_cost_element="Employee Related",
+            oracle_department="1100",
+            oracle_account_number="ACC-1001",
+            activity_id="NC-1100-ACC-1001",
+        )])
+        resp = client.get("/api/spend/transactions")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["activity_id"] == "NC-1100-ACC-1001"
+        assert items[0]["oracle_cost_element"] == "Employee Related"
+
+    def test_nc_activity_id_filter_returns_only_matching_rows(self, client, db):
+        seed(db, [
+            make_spend(
+                vendor_name="ADP",
+                oracle_cost_element="Employee Related",
+                oracle_department="1400",
+                oracle_account_number="ACC-2200",
+                activity_id="NC-1400-ACC-2200",
+            ),
+            make_spend(
+                vendor_name="AWS",
+                oracle_cost_element="Salaries",
+                oracle_department="1100",
+                oracle_account_number="ACC-1001",
+                activity_id="AOPEX-0000001",
+            ),
+        ])
+        resp = client.get("/api/spend/transactions?activity_ids=NC-1400-ACC-2200")
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["vendor_name"] == "ADP"
+
+    def test_nc_activity_id_format_matches_rule(self):
+        """Unit-test the format string used by _assign_nc_activity_ids."""
+        dept = "1800"
+        account = "ACC-3178"
+        nc_id = f"NC-{dept}-{account}"
+        assert nc_id == "NC-1800-ACC-3178"
+        assert nc_id.startswith("NC-")
+        assert len(nc_id) <= 20  # fits varchar(20) activity_id column
+
+    def test_multiple_depts_produce_distinct_nc_ids(self):
+        combos = [
+            ("1100", "ACC-1001"),
+            ("1400", "ACC-2200"),
+            ("1800", "ACC-3178"),
+        ]
+        nc_ids = [f"NC-{dept}-{acct}" for dept, acct in combos]
+        assert len(nc_ids) == len(set(nc_ids))

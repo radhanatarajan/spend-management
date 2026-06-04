@@ -13,12 +13,11 @@ import DropdownSlicer from "../../components/DropdownSlicer";
 const fmtCompact = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", notation: "compact", maximumFractionDigits: 1 });
 const fmtK = (v) => fmtCompact.format(Number(v ?? 0));
 
-function KpiCard({ label, value, sub, accent }) {
+function KpiCell({ label, value, accent }) {
   return (
-    <div className="bg-white border border-gray-100 rounded-xl p-4">
-      <div className="text-[10px] text-gray-400 uppercase tracking-wide mb-1.5">{label}</div>
-      <div className={`text-xl font-semibold truncate ${accent || "text-gray-900"}`}>{value}</div>
-      {sub && <div className="text-[10px] text-gray-400 mt-0.5">{sub}</div>}
+    <div className="flex-1 px-4 py-2 text-center min-w-[100px]">
+      <div className="text-[9px] text-gray-400 uppercase tracking-wide mb-0.5">{label}</div>
+      <div className={`text-sm font-bold tabular-nums ${accent || "text-gray-900"}`}>{value}</div>
     </div>
   );
 }
@@ -28,7 +27,7 @@ const CURRENT_YEAR = new Date().getFullYear();
 export default function NonControllablePage() {
   const [fiscalYear, setFiscalYear] = useState(CURRENT_YEAR + 1);
   const [selectedScenarioId, setSelectedScenarioId] = useState(null);
-  const [deptFilter, setDeptFilter] = useState([]);   // empty = show all
+  const [deptFilter, setDeptFilter] = useState([]);
 
   const { data: scenarios, isLoading: scenariosLoading } = useScenarios(fiscalYear, "NON_CONTROLLABLE");
 
@@ -44,13 +43,11 @@ export default function NonControllablePage() {
     effectiveScenarioId
   );
 
-  // Apply department filter to plan data (client-side)
   const filteredPlan = useMemo(() => {
     if (!plan) return null;
     if (deptFilter.length === 0) return plan;
     const depts = plan.departments.filter((d) => deptFilter.includes(d.department_name));
 
-    // Recompute totals for filtered set
     const sum = (field, q) => depts.reduce((s, d) => s + Number(d[field]?.[q] ?? 0), 0);
     const makeQ = (field) => {
       const q1 = sum(field, "q1"), q2 = sum(field, "q2"),
@@ -75,8 +72,6 @@ export default function NonControllablePage() {
     if (!filteredPlan?.totals) return null;
     const { current, approved_rec, additional_ask } = filteredPlan.totals;
 
-    // Split current into actuals vs forecast using the first dept's forecast map
-    // (cutoff applies uniformly across all depts)
     const forecastMap = filteredPlan.departments?.[0]?.current_is_forecast ?? {};
     const QS = ["q1", "q2", "q3", "q4"];
     const actualsAnnual = QS.filter((q) => !forecastMap[q]).reduce((s, q) => s + Number(current?.[q] ?? 0), 0);
@@ -89,7 +84,6 @@ export default function NonControllablePage() {
   }, [filteredPlan]);
 
   const availableDepts = plan?.departments ?? [];
-
   const deptOptions = availableDepts.map((d) => ({
     value: d.department_name,
     label: d.department_code ? `${d.department_name} (${d.department_code})` : d.department_name,
@@ -97,17 +91,25 @@ export default function NonControllablePage() {
   const availableYears = [CURRENT_YEAR - 1, CURRENT_YEAR, CURRENT_YEAR + 1, CURRENT_YEAR + 2];
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900">Non-Controllable Budget</h2>
-          <p className="text-xs text-gray-400 mt-0.5">
-            Employee-related costs (salaries, travel, bonus, overtime) by department
-          </p>
+    <div className="space-y-2">
+      {/* Row 1: Title + scenario selector + FY picker */}
+      <div className="bg-white border border-gray-200 rounded-xl px-4 py-2.5 flex items-center gap-3 flex-wrap">
+        <div className="shrink-0">
+          <span className="text-sm font-semibold text-gray-900">Non-Controllable Budget</span>
+          <span className="ml-2 text-[11px] text-gray-400">Labor related cost by department</span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-400">Fiscal Year:</span>
+        <div className="flex-1" />
+        {!scenariosLoading && (
+          <ScenarioPanel
+            scenarios={scenarios ?? []}
+            selectedId={effectiveScenarioId}
+            onSelect={setSelectedScenarioId}
+            fiscalYear={fiscalYear}
+            compact
+          />
+        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-xs text-gray-400">FY:</span>
           <select
             value={fiscalYear}
             onChange={(e) => {
@@ -115,7 +117,7 @@ export default function NonControllablePage() {
               setSelectedScenarioId(null);
               setDeptFilter([]);
             }}
-            className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+            className="text-sm border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-300"
           >
             {availableYears.map((y) => (
               <option key={y} value={y}>FY{y}</option>
@@ -124,74 +126,48 @@ export default function NonControllablePage() {
         </div>
       </div>
 
-      {/* Scenario panel */}
-      {!scenariosLoading && (
-        <ScenarioPanel
-          scenarios={scenarios ?? []}
-          selectedId={effectiveScenarioId}
-          onSelect={setSelectedScenarioId}
-          fiscalYear={fiscalYear}
-        />
-      )}
-
-      {/* Filters */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+      {/* Row 2: All filters in one horizontal line */}
+      <div className="bg-white border border-gray-200 rounded-xl px-4 py-2 flex items-center gap-4 flex-wrap">
         <CostElementFilter fiscalYear={fiscalYear} />
+        <div className="w-px h-4 bg-gray-200 shrink-0" />
         <AccountGroupFilter fiscalYear={fiscalYear} />
         <AccountSubGroupFilter fiscalYear={fiscalYear} />
+        <div className="w-px h-4 bg-gray-200 shrink-0" />
         <ActualsCutoffControl fiscalYear={fiscalYear} />
         {deptOptions.length > 0 && (
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-gray-400 shrink-0">Departments:</span>
-            <div className="w-56">
-              <DropdownSlicer
-                title="Department"
-                options={deptOptions}
-                selected={deptFilter}
-                onToggle={setDeptFilter}
-              />
+          <>
+            <div className="w-px h-4 bg-gray-200 shrink-0" />
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs text-gray-400 shrink-0">Dept:</span>
+              <div className="w-36">
+                <DropdownSlicer
+                  title="Department"
+                  options={deptOptions}
+                  selected={deptFilter}
+                  onToggle={setDeptFilter}
+                />
+              </div>
             </div>
-          </div>
+          </>
         )}
       </div>
 
-      {/* KPI cards */}
+      {/* Row 3: KPI strip */}
       {kpis && (
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-          <KpiCard
-            label="Current — Actuals (FY)"
-            value={fmtK(kpis.actualsAnnual)}
-            sub="Confirmed spend from actuals"
-            accent="text-emerald-700"
-          />
-          <KpiCard
-            label="Current — Forecast (FY)"
-            value={fmtK(kpis.forecastAnnual)}
-            sub="Carry-forward estimate"
-            accent="text-amber-600"
-          />
-          <KpiCard
-            label="Total Approved Rec (FY)"
-            value={fmtK(kpis.approvedAnnual)}
-            sub="Sum of all approved rec amounts"
-            accent="text-indigo-700"
-          />
-          <KpiCard
-            label="Total Additional Ask (FY)"
-            value={fmtK(kpis.askAnnual)}
-            sub="Sum of all additional ask amounts"
-            accent="text-amber-700"
-          />
-          <KpiCard
+        <div className="bg-white border border-gray-200 rounded-xl flex items-stretch divide-x divide-gray-100 overflow-hidden">
+          <KpiCell label="Actuals (FY)" value={fmtK(kpis.actualsAnnual)} accent="text-emerald-700" />
+          <KpiCell label="Forecast (FY)" value={fmtK(kpis.forecastAnnual)} accent="text-amber-600" />
+          <KpiCell label="Approved Rec" value={fmtK(kpis.approvedAnnual)} accent="text-indigo-700" />
+          <KpiCell label="Additional Ask" value={fmtK(kpis.askAnnual)} accent="text-amber-700" />
+          <KpiCell
             label="Ask Delta"
             value={`${kpis.deltaPercent}%`}
-            sub="Additional Ask ÷ Approved Rec"
-            accent={Number(kpis.deltaPercent) > 10 ? "text-red-600" : "text-gray-900"}
+            accent={Number(kpis.deltaPercent) > 10 ? "text-red-600" : "text-gray-700"}
           />
         </div>
       )}
 
-      {/* Loading */}
+      {/* Loading state */}
       {(planLoading || isFetching) && !plan && (
         <div className="bg-white border border-gray-200 rounded-xl p-8 text-center text-sm text-gray-400">
           Loading…
@@ -211,10 +187,7 @@ export default function NonControllablePage() {
         </div>
       )}
 
-      {/* Audit log */}
       {effectiveScenarioId && <AuditLogPanel scenarioId={effectiveScenarioId} />}
-
-      {/* What-If panel */}
       {filteredPlan && <WhatIfPanel plan={filteredPlan} />}
     </div>
   );

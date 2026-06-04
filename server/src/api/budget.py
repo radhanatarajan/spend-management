@@ -136,6 +136,28 @@ def _compute_current(
     ).all()
     dept_code_map: dict[str, str] = {name: code for name, code in all_dept_rows}
 
+    # Distinct account groups per dept (using same filters as actuals)
+    dept_account_groups: dict[str, list[str]] = {}
+    if selected_elements:
+        ag_conditions = [
+            Spend.month_key >= py_start,
+            Spend.month_key <= py_end,
+            Spend.oracle_cost_element.in_(selected_elements),
+        ]
+        if selected_account_groups:
+            ag_conditions.append(Spend.oracle_account_group.in_(selected_account_groups))
+        if selected_account_sub_groups:
+            ag_conditions.append(Spend.oracle_account_sub_group.in_(selected_account_sub_groups))
+        ag_rows = db.execute(
+            select(Spend.oracle_department_name, Spend.oracle_account_group)
+            .where(*ag_conditions)
+            .distinct()
+            .order_by(Spend.oracle_department_name, Spend.oracle_account_group)
+        ).all()
+        for dept_name, ag in ag_rows:
+            if ag:
+                dept_account_groups.setdefault(dept_name, []).append(ag)
+
     for d in (set(actuals.keys()) | set(carry_forward.keys())):
         if d not in dept_code_map:
             dept_code_map[d] = ""
@@ -172,6 +194,7 @@ def _compute_current(
         row = DepartmentBudgetRow(
             department_name=dept,
             department_code=dept_code_map.get(dept),
+            account_groups=dept_account_groups.get(dept, []),
             current=QuarterlyAmounts(
                 q1=q_amounts["q1"],
                 q2=q_amounts["q2"],
