@@ -298,7 +298,7 @@ export default function NonControllableTable({ plan, scenarioId }) {
               const deptCell = (rowSpan) => (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => toggleDept(dept.department_name)}
+                  onClick={(e) => { e.stopPropagation(); toggleDept(dept.department_name); }}
                   className="sticky left-0 z-10 px-3 py-3 bg-white align-top border-r border-gray-100 cursor-pointer select-none"
                 >
                   <div className="flex items-start gap-1.5">
