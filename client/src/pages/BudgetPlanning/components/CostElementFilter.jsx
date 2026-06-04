@@ -44,7 +44,7 @@ export default function CostElementFilter({ fiscalYear }) {
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
       <span className="text-xs text-gray-400 shrink-0">Cost Elements:</span>
-      <div className={`w-56 ${isPending ? "opacity-60 pointer-events-none" : ""}`}>
+      <div className={`w-36 ${isPending ? "opacity-60 pointer-events-none" : ""}`}>
         <DropdownSlicer
           title="Cost Element"
           options={available}

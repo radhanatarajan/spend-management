@@ -241,6 +241,15 @@ Use for data that changes frequently during active business cycles: contracts, b
 - Uses `event_type` values `AMOUNT_CHANGED` / `STATUS_CHANGED` instead of CREATED/UPDATED/DELETED
 - MySQL view `v_budget_entry_audit` unpacks JSON for the Budget Change Log report
 
+### NC Activity ID Business Rule
+
+Spend rows with `oracle_cost_element = 'Employee Related'` are automatically assigned an `activity_id` on API startup by `_assign_nc_activity_ids()` in `init_db.py`:
+
+- Format: `NC-{oracle_department}-{oracle_account_number}` (e.g. `NC-1800-ACC-3178`)
+- The corresponding `ActivityId` reference record is inserted if missing
+- Idempotent: only updates rows where `activity_id` is NULL or doesn't already match the formula
+- MySQL-only (uses `CONCAT` in raw SQL) — not executed against SQLite in tests
+
 ### Status State Machine (`budget_entries.status`)
 
 ```
@@ -277,6 +286,7 @@ Test credentials (seeded on first `make dev-api`):
 - Never mock the DB — tests run against real SQLite via `StaticPool`
 - All tests must pass before pushing
 - Endpoints that query MySQL-only views (e.g. `GET /api/budget/reports/audit` → `v_budget_entry_audit`) cannot be tested in SQLite; cover adjacent logic (the view columns, audit writes) in other tests instead
+- `_assign_nc_activity_ids()` in `init_db.py` uses raw `CONCAT(...)` SQL — MySQL-only, cannot be tested in SQLite. Test the format contract (`f"NC-{dept}-{acct}"`) and API filtering behavior instead (see `TestNcActivityIdRule` in `test_spend.py`)
 
 ---
 
@@ -286,7 +296,7 @@ Test credentials (seeded on first `make dev-api`):
 |---|---|
 | Spend Analytics (`/spend`) | Done |
 | Contract Database (`/contracts`) | Done |
-| Budget Planning — Non-Controllable (`/budget-planning`) | Done |
+| Budget Planning — Non-Controllable (`/budget-planning`) | Done — flat table with collapsible dept groups (rowSpan), compact scenario dropdown, KPI strip |
 | Budget Planning — Controllable (contract-seeded) | **Next** |
 | Forecasting (`/forecasting`) | Planned |
 | Spend Report | Done |

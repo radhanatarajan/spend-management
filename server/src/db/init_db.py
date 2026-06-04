@@ -120,6 +120,7 @@ def init_db() -> None:
     _backfill_spend_accounts()
     _backfill_spend_departments()
     _backfill_spend_activities()
+    _assign_nc_activity_ids()
     _backfill_account_desc()
 
 
@@ -1627,6 +1628,59 @@ def _backfill_spend_activities() -> None:
             added = True
         if added:
             db.commit()
+    finally:
+        db.close()
+
+
+def _assign_nc_activity_ids() -> None:
+    """Apply the NC activity ID rule: Employee Related spend gets activity_id = NC-{dept}-{account}.
+
+    Idempotent — skips activity_ids entries that already exist and skips spend rows
+    whose activity_id already matches the NC formula.
+    """
+    from src.models.reference import ActivityId, AccountNumber
+
+    db = SessionLocal()
+    try:
+        combos = db.execute(text("""
+            SELECT DISTINCT oracle_department, oracle_department_name, oracle_account_number
+            FROM spend
+            WHERE oracle_cost_element = 'Employee Related'
+            ORDER BY oracle_department, oracle_account_number
+        """)).fetchall()
+
+        if not combos:
+            return
+
+        acct_map = {a.account_number: a.id for a in db.query(AccountNumber).all()}
+        existing_ids = {a.activity_id for a in db.query(ActivityId.activity_id).all()}
+
+        added = False
+        for dept_code, dept_name, acct_num in combos:
+            nc_id = f"NC-{dept_code}-{acct_num}"
+            if nc_id not in existing_ids:
+                db.add(ActivityId(
+                    activity_id=nc_id,
+                    activity_id_desc=f"Employee Related / {dept_name} / {acct_num}",
+                    department_code=dept_code,
+                    account_id=acct_map.get(acct_num),
+                    project_id=None,
+                ))
+                existing_ids.add(nc_id)
+                added = True
+
+        if added:
+            db.commit()
+
+        # Update spend rows where the current activity_id doesn't match the NC formula
+        db.execute(text("""
+            UPDATE spend
+            SET activity_id = CONCAT('NC-', oracle_department, '-', oracle_account_number)
+            WHERE oracle_cost_element = 'Employee Related'
+              AND (activity_id IS NULL
+                   OR activity_id != CONCAT('NC-', oracle_department, '-', oracle_account_number))
+        """))
+        db.commit()
     finally:
         db.close()
 
