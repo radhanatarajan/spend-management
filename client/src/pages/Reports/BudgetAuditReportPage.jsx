@@ -14,7 +14,12 @@ function fmtDate(iso) {
   });
 }
 
-const ENTRY_TYPE_LABELS = { APPROVED_REC: "Approved Rec", ADDITIONAL_ASK: "Additional Ask" };
+const ENTRY_TYPE_LABELS = {
+  APPROVED_REC:   "Approved Rec",
+  ADDITIONAL_ASK: "Additional Ask",
+  EXISTING:       "Controllable (Existing)",
+  NEW_REQUEST:    "Controllable (New Request)",
+};
 const STATUS_COLORS = {
   DRAFT:            "bg-gray-100 text-gray-600",
   READY_FOR_REVIEW: "bg-blue-50 text-blue-700",
@@ -131,6 +136,7 @@ function AuditTable({ rows }) {
           <tbody className="divide-y divide-gray-100">
             {rows.map((row) => {
               const isAmount = row.event_type === "AMOUNT_CHANGED";
+              const isIdAssigned = row.event_type === "UPDATED" && !!row.activity_id_new;
               return (
                 <tr key={row.audit_id} className="hover:bg-gray-50 group">
                   <td className="sticky left-0 z-10 bg-white group-hover:bg-gray-50 px-4 py-2.5 whitespace-nowrap text-gray-500">
@@ -145,9 +151,11 @@ function AuditTable({ rows }) {
                   </td>
                   <td className="px-3 py-2.5">
                     <span className={`inline-block text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                      isAmount ? "bg-indigo-50 text-indigo-600" : "bg-blue-50 text-blue-700"
+                      isAmount     ? "bg-indigo-50 text-indigo-600"
+                      : isIdAssigned ? "bg-amber-50 text-amber-700"
+                      : "bg-blue-50 text-blue-700"
                     }`}>
-                      {isAmount ? "Amounts" : "Status"}
+                      {isAmount ? "Amounts" : isIdAssigned ? "ID Assigned" : "Status"}
                     </span>
                   </td>
 
@@ -168,9 +176,16 @@ function AuditTable({ rows }) {
                     </>
                   )}
 
-                  {/* Status */}
+                  {/* Status / Activity ID */}
                   <td className="px-3 py-2.5">
-                    {row.status_old || row.status_new ? (
+                    {isIdAssigned ? (
+                      <div className="font-mono text-[11px] leading-tight">
+                        {row.activity_id_old && (
+                          <div className="text-gray-400 line-through">{row.activity_id_old}</div>
+                        )}
+                        <div className="text-amber-700 font-semibold">{row.activity_id_new}</div>
+                      </div>
+                    ) : row.status_old || row.status_new ? (
                       <div className="flex items-center gap-1.5">
                         <StatusBadge value={row.status_old} />
                         <span className="text-gray-300">→</span>
@@ -193,6 +208,7 @@ function AuditTable({ rows }) {
       <div className="px-4 py-2.5 border-t border-gray-100 flex items-center gap-4 text-[10px] text-gray-400 flex-wrap">
         <span>Amount rows: <span className="text-gray-400 line-through">strikethrough</span> = old · <span className="text-indigo-700 font-semibold">indigo</span> = new</span>
         <span>Status rows: Q amounts shown as current (greyed)</span>
+        <span>ID Assigned: <span className="text-amber-700 font-semibold">amber</span> = new activity ID</span>
       </div>
     </div>
   );
