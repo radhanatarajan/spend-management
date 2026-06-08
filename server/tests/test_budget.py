@@ -1219,3 +1219,58 @@ class TestControllableBudget:
             f"?fiscal_year={self.FY}&scenario_a_id={ctrl.id}&scenario_b_id={nc.id}"
         )
         assert r.status_code == 404
+
+
+class TestBudgetReport:
+    FY = 2027
+
+    def test_returns_both_nc_and_ctrl_rows(self, admin_client, db):
+        nc_s = make_scenario(db, fiscal_year=self.FY, name="NC-BL-Rpt",
+                             budget_type="NON_CONTROLLABLE", is_baseline=True)
+        make_entry(db, nc_s.id, department_name="Engineering",
+                   entry_type="APPROVED_REC", q1=Decimal("100000"), q2=Decimal("100000"))
+
+        ctrl_s = make_scenario(db, fiscal_year=self.FY, name="Ctrl-BL-Rpt",
+                               budget_type="CONTROLLABLE", is_baseline=True)
+        make_controllable_entry(db, ctrl_s.id, activity_id="ACT-001",
+                                entry_category="EXISTING", q1=Decimal("50000"))
+
+        r = admin_client.get(
+            f"/api/budget/reports/budget?fiscal_year={self.FY}"
+            f"&scenario_nc_id={nc_s.id}&scenario_ctrl_id={ctrl_s.id}"
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["fiscal_year"] == self.FY
+        assert body["scenario_nc"]["id"] == nc_s.id
+        assert body["scenario_ctrl"]["id"] == ctrl_s.id
+
+        rows = body["rows"]
+        nc_rows   = [row for row in rows if row["source"] == "NC"]
+        ctrl_rows = [row for row in rows if row["source"] == "CTRL"]
+        assert len(nc_rows) == 1
+        assert len(ctrl_rows) == 1
+
+        assert nc_rows[0]["department_name"] == "Engineering"
+        assert nc_rows[0]["expense_type"]    is None
+        assert nc_rows[0]["activity_id"]     is None
+        assert float(nc_rows[0]["q1_amount"]) == pytest.approx(100000.0)
+
+        assert ctrl_rows[0]["activity_id"] == "ACT-001"
+        assert float(ctrl_rows[0]["q1_amount"]) == pytest.approx(50000.0)
+
+    def test_defaults_to_baseline_when_no_scenario_ids_given(self, admin_client, db):
+        nc_s   = make_scenario(db, fiscal_year=self.FY, name="NC-BL-Def",
+                               budget_type="NON_CONTROLLABLE", is_baseline=True)
+        ctrl_s = make_scenario(db, fiscal_year=self.FY, name="Ctrl-BL-Def",
+                               budget_type="CONTROLLABLE", is_baseline=True)
+
+        r = admin_client.get(f"/api/budget/reports/budget?fiscal_year={self.FY}")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["scenario_nc"]["id"] == nc_s.id
+        assert body["scenario_ctrl"]["id"] == ctrl_s.id
+
+    def test_requires_auth(self, client):
+        r = client.get(f"/api/budget/reports/budget?fiscal_year={self.FY}")
+        assert r.status_code == 401

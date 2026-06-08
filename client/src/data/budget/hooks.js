@@ -9,6 +9,7 @@ import {
   fetchControllablePlan, fetchControllableComparison,
   upsertControllableEntry, deleteControllableEntry,
   updateControllableEntryStatus, upsertLineOverride,
+  fetchBudgetReport,
 } from "./api";
 
 const KEYS = {
@@ -19,6 +20,7 @@ const KEYS = {
   scenarios: (fy, type) => ["budget", "scenarios", fy, type],
   ncPlan: (fy, scenarioId) => ["budget", "ncPlan", fy, scenarioId],
   controllablePlan: (fy, scenarioId) => ["budget", "controllablePlan", fy, scenarioId],
+  budgetReport: (fy, ncId, ctrlId) => ["budget", "report", fy, ncId, ctrlId],
 };
 
 export function useCostElements() {
@@ -217,6 +219,15 @@ export function useControllableComparison(fiscalYear, scenarioAId, scenarioBId) 
     queryKey: ["budget", "ctrlCompare", fiscalYear, scenarioAId, scenarioBId],
     queryFn: () => fetchControllableComparison(fiscalYear, scenarioAId, scenarioBId),
     enabled: fiscalYear != null && scenarioAId != null && scenarioBId != null && scenarioAId !== scenarioBId,
+    staleTime: 30_000,
+  });
+}
+
+export function useBudgetReport(fiscalYear, scenarioNcId, scenarioCtrlId) {
+  return useQuery({
+    queryKey: KEYS.budgetReport(fiscalYear, scenarioNcId, scenarioCtrlId),
+    queryFn: () => fetchBudgetReport(fiscalYear, scenarioNcId, scenarioCtrlId),
+    enabled: fiscalYear != null,
     staleTime: 30_000,
   });
 }

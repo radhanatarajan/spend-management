@@ -408,3 +408,26 @@ class ControllablePlanOut(BaseModel):
     scenario_id: int
     actuals_cutoff_month_key: Optional[int]
     rows: list[ControllablePlanRow]
+
+
+class BudgetReportRow(BaseModel):
+    source: str                            # "NC" or "CTRL"
+    department_name: Optional[str] = None
+    expense_type: Optional[str] = None
+    cost_element: Optional[str] = None
+    account_group: Optional[str] = None
+    account_sub_group: Optional[str] = None
+    account_number: Optional[str] = None
+    activity_id: Optional[str] = None
+    entry_type: Optional[str] = None       # APPROVED_REC / ADDITIONAL_ASK / EXISTING / NEW_REQUEST
+    q1_amount: Decimal = Decimal("0")
+    q2_amount: Decimal = Decimal("0")
+    q3_amount: Decimal = Decimal("0")
+    q4_amount: Decimal = Decimal("0")
+
+
+class BudgetReportOut(BaseModel):
+    fiscal_year: int
+    scenario_nc: BudgetScenarioOut
+    scenario_ctrl: BudgetScenarioOut
+    rows: list[BudgetReportRow]

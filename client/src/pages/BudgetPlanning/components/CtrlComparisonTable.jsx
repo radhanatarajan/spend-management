@@ -160,8 +160,7 @@ export default function CtrlComparisonTable({ data, scenarioAName, scenarioBName
               const deptCell = (rowSpan) => (
                 <td
                   rowSpan={rowSpan}
-                  onClick={() => toggleDept(dept.department_name)}
-                  className="sticky left-0 z-10 px-3 py-3 bg-white align-top border-r border-gray-100 cursor-pointer select-none"
+                  className="sticky left-0 z-10 px-3 py-3 bg-white align-top border-r border-gray-100 select-none"
                 >
                   <div className="flex items-start gap-1.5">
                     <svg
@@ -199,8 +198,8 @@ export default function CtrlComparisonTable({ data, scenarioAName, scenarioBName
                 <Fragment key={dept.department_name}>
                   {/* Activity rows */}
                   {activityRows.map((row, ri) => (
-                    <tr key={row.activity_id ?? row.entry_label} className={`bg-white hover:bg-gray-50 ${ri === 0 ? borderTop : "border-t border-gray-100"}`}>
-                      {ri === 0 && deptCell(activityRows.length + 1)}
+                    <tr key={row.activity_id ?? row.entry_label} onClick={() => toggleDept(dept.department_name)} className={`bg-white hover:bg-gray-50 cursor-pointer ${ri === 0 ? borderTop : "border-t border-gray-100"}`}>
+                      {ri === 0 && deptCell(activityRows.length)}
                       <td className="px-3 py-2.5 border-r border-gray-100">
                         <ActivityLabel row={row} />
                       </td>
@@ -209,8 +208,8 @@ export default function CtrlComparisonTable({ data, scenarioAName, scenarioBName
                   ))}
                   {/* Dept subtotal */}
                   <tr className="bg-gray-50 border-t border-gray-200 font-semibold">
-                    <td className="px-3 py-2 text-[11px] text-gray-500 uppercase tracking-wide border-r border-gray-100 sticky left-[0] z-[9] bg-gray-50" />
-                    <td className="px-3 py-2 text-[11px] text-gray-500 uppercase tracking-wide border-r border-gray-100">Subtotal</td>
+                    <td className="sticky left-0 z-[9] px-3 py-2 text-[11px] text-gray-500 uppercase tracking-wide border-r border-gray-100 bg-gray-50">Subtotal</td>
+                    <td className="border-r border-gray-100" />
                     <DataCells a={dept.total_a} b={dept.total_b} delta={dept.total_delta} />
                   </tr>
                 </Fragment>

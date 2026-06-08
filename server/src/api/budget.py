@@ -27,6 +27,7 @@ from src.schemas.budget import (
     ControllableLineOverrideUpsert, ControllableLineOverrideOut,
     ControllableLineDetail, ControllablePlanRow, ControllablePlanOut,
     CtrlActivityCompareRow, CtrlDeptCompareRow, CtrlCompareOut,
+    BudgetReportRow, BudgetReportOut,
 )
 
 router = APIRouter(prefix="/api/budget", tags=["budget"])
@@ -614,6 +615,102 @@ def get_audit_report(
         fiscal_year=fiscal_year,
         rows=row_list,
         filter_options=filter_options,
+    )
+
+
+# ── Budget Report (combined NC + Controllable) ────────────────────────────────
+
+@router.get("/reports/budget", response_model=BudgetReportOut)
+def get_budget_report(
+    fiscal_year: int = Query(...),
+    scenario_nc_id: int | None = Query(None),
+    scenario_ctrl_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_any),
+):
+    def _resolve(budget_type: str, explicit_id: int | None) -> BudgetScenario:
+        if explicit_id is not None:
+            s = db.get(BudgetScenario, explicit_id)
+            if not s or s.budget_type != budget_type:
+                raise HTTPException(status_code=404, detail=f"Scenario {explicit_id} not found")
+            return s
+        s = db.execute(
+            select(BudgetScenario).where(
+                BudgetScenario.fiscal_year == fiscal_year,
+                BudgetScenario.budget_type == budget_type,
+                BudgetScenario.is_baseline == True,
+            )
+        ).scalar_one_or_none()
+        if not s:
+            raise HTTPException(status_code=404, detail=f"No baseline {budget_type} scenario for FY{fiscal_year}")
+        return s
+
+    scenario_nc = _resolve("NON_CONTROLLABLE", scenario_nc_id)
+    scenario_ctrl = _resolve("CONTROLLABLE", scenario_ctrl_id)
+
+    rows: list[BudgetReportRow] = []
+
+    # NC rows
+    nc_entries = db.execute(
+        select(BudgetEntry).where(BudgetEntry.scenario_id == scenario_nc.id)
+    ).scalars().all()
+    for e in nc_entries:
+        rows.append(BudgetReportRow(
+            source="NC",
+            department_name=e.department_name,
+            entry_type=e.entry_type,
+            q1_amount=e.q1_amount or Decimal("0"),
+            q2_amount=e.q2_amount or Decimal("0"),
+            q3_amount=e.q3_amount or Decimal("0"),
+            q4_amount=e.q4_amount or Decimal("0"),
+        ))
+
+    # CTRL rows — enrich from ActivityId → AccountNumber → Department
+    ctrl_entries = db.execute(
+        select(ControllableBudgetEntry).where(ControllableBudgetEntry.scenario_id == scenario_ctrl.id)
+    ).scalars().all()
+
+    act_ids = {e.activity_id for e in ctrl_entries if e.activity_id}
+    activity_meta: dict[str, dict] = {}
+    if act_ids:
+        for ai, an, dept in (
+            db.query(ActivityId, AccountNumber, Department)
+            .outerjoin(AccountNumber, ActivityId.account_id == AccountNumber.id)
+            .outerjoin(Department, ActivityId.department_code == Department.department_code)
+            .filter(ActivityId.activity_id.in_(act_ids))
+            .all()
+        ):
+            activity_meta[ai.activity_id] = {
+                "department_name": dept.department_name if dept else None,
+                "account_group":    an.account_group    if an else None,
+                "account_sub_group": an.account_sub_group if an else None,
+                "cost_element":     an.cost_element     if an else None,
+                "account_number":   an.account_number   if an else None,
+            }
+
+    for e in ctrl_entries:
+        meta = activity_meta.get(e.activity_id, {}) if e.activity_id else {}
+        rows.append(BudgetReportRow(
+            source="CTRL",
+            department_name=e.department_name or meta.get("department_name"),
+            expense_type=e.expense_type,
+            cost_element=e.cost_element or meta.get("cost_element"),
+            account_group=e.account_group or meta.get("account_group"),
+            account_sub_group=e.account_sub_group or meta.get("account_sub_group"),
+            account_number=meta.get("account_number"),
+            activity_id=e.activity_id,
+            entry_type=e.entry_category,
+            q1_amount=e.q1_amount or Decimal("0"),
+            q2_amount=e.q2_amount or Decimal("0"),
+            q3_amount=e.q3_amount or Decimal("0"),
+            q4_amount=e.q4_amount or Decimal("0"),
+        ))
+
+    return BudgetReportOut(
+        fiscal_year=fiscal_year,
+        scenario_nc=BudgetScenarioOut.model_validate(scenario_nc),
+        scenario_ctrl=BudgetScenarioOut.model_validate(scenario_ctrl),
+        rows=rows,
     )
 
 
