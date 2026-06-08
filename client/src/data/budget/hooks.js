@@ -6,6 +6,8 @@ import {
   fetchNonControllablePlan, upsertEntry, deleteEntry,
   fetchScenarioComparison, updateEntryStatus, fetchScenarioAudit,
   fetchBudgetAuditReport,
+  fetchControllablePlan, upsertControllableEntry, deleteControllableEntry,
+  updateControllableEntryStatus, upsertLineOverride,
 } from "./api";
 
 const KEYS = {
@@ -15,6 +17,7 @@ const KEYS = {
   ncConfig: (fy) => ["budget", "ncConfig", fy],
   scenarios: (fy, type) => ["budget", "scenarios", fy, type],
   ncPlan: (fy, scenarioId) => ["budget", "ncPlan", fy, scenarioId],
+  controllablePlan: (fy, scenarioId) => ["budget", "controllablePlan", fy, scenarioId],
 };
 
 export function useCostElements() {
@@ -166,5 +169,54 @@ export function useScenarioComparison(fiscalYear, scenarioAId, scenarioBId) {
     queryFn: () => fetchScenarioComparison(fiscalYear, scenarioAId, scenarioBId),
     enabled: fiscalYear != null && scenarioAId != null && scenarioBId != null && scenarioAId !== scenarioBId,
     staleTime: 30_000,
+  });
+}
+
+export function useControllablePlan(fiscalYear, scenarioId) {
+  return useQuery({
+    queryKey: KEYS.controllablePlan(fiscalYear, scenarioId),
+    queryFn: () => fetchControllablePlan(fiscalYear, scenarioId),
+    enabled: fiscalYear != null && scenarioId != null,
+    staleTime: 30_000,
+  });
+}
+
+export function useUpsertControllableEntry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: upsertControllableEntry,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["budget", "controllablePlan"] });
+    },
+  });
+}
+
+export function useDeleteControllableEntry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: deleteControllableEntry,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["budget", "controllablePlan"] });
+    },
+  });
+}
+
+export function useUpdateControllableEntryStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status }) => updateControllableEntryStatus(id, status),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["budget", "controllablePlan"] });
+    },
+  });
+}
+
+export function useUpsertLineOverride() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: upsertLineOverride,
+    onSuccess: () => {
+      qc.refetchQueries({ queryKey: ["budget", "controllablePlan"] });
+    },
   });
 }

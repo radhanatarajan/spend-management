@@ -85,3 +85,29 @@ export async function fetchBudgetAuditReport(fiscalYear) {
   const { data } = await axios.get(`${BASE}/reports/audit`, { params: { fiscal_year: fiscalYear } });
   return data;
 }
+
+export async function fetchControllablePlan(fiscalYear, scenarioId) {
+  const { data } = await axios.get(`${BASE}/controllable`, {
+    params: { fiscal_year: fiscalYear, scenario_id: scenarioId },
+  });
+  return data;
+}
+
+export async function upsertControllableEntry(payload) {
+  const { data } = await axios.put(`${BASE}/controllable/entries`, payload);
+  return data;
+}
+
+export async function deleteControllableEntry(id) {
+  await axios.delete(`${BASE}/controllable/entries/${id}`);
+}
+
+export async function updateControllableEntryStatus(id, status) {
+  const { data } = await axios.patch(`${BASE}/controllable/entries/${id}/status`, { status });
+  return data;
+}
+
+export async function upsertLineOverride(payload) {
+  const { data } = await axios.put(`${BASE}/controllable/line-overrides`, payload);
+  return data;
+}

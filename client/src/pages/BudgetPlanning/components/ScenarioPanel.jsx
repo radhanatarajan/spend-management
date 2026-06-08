@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useCreateScenario, useUpdateScenario, useDeleteScenario } from "../../../data/budget/hooks";
 
-export default function ScenarioPanel({ scenarios, selectedId, onSelect, fiscalYear, compact }) {
+export default function ScenarioPanel({ scenarios, selectedId, onSelect, fiscalYear, compact, budgetType = "NON_CONTROLLABLE" }) {
   const [showCreate, setShowCreate] = useState(false);
   const [showRename, setShowRename] = useState(null);
   const [newName, setNewName] = useState("");
@@ -21,7 +21,7 @@ export default function ScenarioPanel({ scenarios, selectedId, onSelect, fiscalY
         name: newName.trim(),
         description: newDesc.trim() || null,
         fiscal_year: fiscalYear,
-        budget_type: "NON_CONTROLLABLE",
+        budget_type: budgetType,
         copy_from_scenario_id: copyFrom ? Number(copyFrom) : null,
       },
       {

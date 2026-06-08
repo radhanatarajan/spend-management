@@ -247,3 +247,130 @@ class ScenarioCompareOut(BaseModel):
     all_scenarios: list[BudgetScenarioOut]
     departments: list[DeptCompareRow]
     totals: DeptCompareRow
+
+
+# ── Controllable Budget ───────────────────────────────────────────────────────
+
+class ControllableEntryUpsert(BaseModel):
+    entry_id: Optional[int] = None
+    scenario_id: int
+    fiscal_year: int
+    activity_id: Optional[str] = None
+    entry_label: Optional[str] = None
+    entry_category: str = "EXISTING"
+    department_name: Optional[str] = None
+    account_group: Optional[str] = None
+    account_sub_group: Optional[str] = None
+    cost_element: Optional[str] = None
+    expense_type: Optional[str] = None
+    q1_amount: Optional[Decimal] = None
+    q2_amount: Optional[Decimal] = None
+    q3_amount: Optional[Decimal] = None
+    q4_amount: Optional[Decimal] = None
+    notes: Optional[str] = None
+
+
+class ControllableEntryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scenario_id: int
+    fiscal_year: int
+    activity_id: Optional[str]
+    entry_label: Optional[str]
+    entry_category: str
+    department_name: Optional[str]
+    account_group: Optional[str]
+    account_sub_group: Optional[str]
+    cost_element: Optional[str]
+    expense_type: Optional[str]
+    q1_amount: Optional[Decimal]
+    q2_amount: Optional[Decimal]
+    q3_amount: Optional[Decimal]
+    q4_amount: Optional[Decimal]
+    notes: Optional[str]
+    status: str
+    created_by: str
+    updated_at: datetime
+
+
+class ControllableEntryStatusUpdate(BaseModel):
+    status: str
+
+
+class ControllableLineOverrideUpsert(BaseModel):
+    scenario_id: int
+    contract_line_id: int
+    action: str
+    q1_extended: Optional[Decimal] = None
+    q2_extended: Optional[Decimal] = None
+    q3_extended: Optional[Decimal] = None
+    q4_extended: Optional[Decimal] = None
+
+
+class ControllableLineOverrideOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scenario_id: int
+    contract_line_id: int
+    action: str
+    q1_extended: Optional[Decimal]
+    q2_extended: Optional[Decimal]
+    q3_extended: Optional[Decimal]
+    q4_extended: Optional[Decimal]
+
+
+class ControllableLineDetail(BaseModel):
+    contract_line_id: int
+    contract_id: int
+    vendor_name: str
+    po_number: str
+    po_line_number: int
+    period_start: str
+    period_end: str
+    monthly_amount: Decimal
+    fy_months_count: int
+    fy_contribution: Decimal
+    q1_contribution: Decimal
+    q2_contribution: Decimal
+    q3_contribution: Decimal
+    q4_contribution: Decimal
+    override_action: str
+    q1_extended: Optional[Decimal]
+    q2_extended: Optional[Decimal]
+    q3_extended: Optional[Decimal]
+    q4_extended: Optional[Decimal]
+
+
+class ControllablePlanRow(BaseModel):
+    activity_id: Optional[str]
+    entry_label: Optional[str]
+    entry_category: str
+    department_name: Optional[str]
+    account_group: Optional[str]
+    account_sub_group: Optional[str]
+    cost_element: Optional[str]
+    expense_type: Optional[str] = None
+    # Quarterly contracted amounts (from contracts, read-only)
+    q1_contracted: Decimal
+    q2_contracted: Decimal
+    q3_contracted: Decimal
+    q4_contracted: Decimal
+    current_and_forecast: Decimal  # annual total = sum of quarterly contracted
+    # User-entered budget amounts
+    q1_amount: Optional[Decimal]
+    q2_amount: Optional[Decimal]
+    q3_amount: Optional[Decimal]
+    q4_amount: Optional[Decimal]
+    total_budget: Decimal
+    entry_id: Optional[int]
+    status: Optional[str]
+    lines: list[ControllableLineDetail]
+
+
+class ControllablePlanOut(BaseModel):
+    fiscal_year: int
+    scenario_id: int
+    actuals_cutoff_month_key: Optional[int]
+    rows: list[ControllablePlanRow]

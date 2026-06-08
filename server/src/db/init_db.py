@@ -9,7 +9,7 @@ from src.db.session import engine, SessionLocal
 from src.models import spend as _spend_module     # noqa: F401 — registers Spend with Base.metadata
 from src.models import user as _user_module       # noqa: F401 — registers User with Base.metadata
 from src.models import contract as _contract_module  # noqa: F401 — registers Contract/ContractLine with Base.metadata
-from src.models import budget as _budget_module   # noqa: F401 — registers BudgetScenario/BudgetEntry/BudgetNcConfig with Base.metadata
+from src.models import budget as _budget_module   # noqa: F401 — registers BudgetScenario/BudgetEntry/BudgetNcConfig/Controllable* with Base.metadata
 from src.models import reference as _reference_module  # noqa: F401 — registers Department/AccountNumber/ProjectId/ActivityId with Base.metadata
 
 
@@ -111,6 +111,9 @@ def init_db() -> None:
     _migrate_contracts_enriched_view()
     _migrate_contract_activity_id()
     _migrate_backfill_contract_line_activity_ids()
+    _migrate_activities_enriched_view()
+    _migrate_ctrl_override_quarterly()
+    _migrate_ctrl_entry_metadata_columns()
     _seed_db()
     _seed_users()
     _seed_contracts()
@@ -1934,3 +1937,74 @@ def _backfill_account_desc() -> None:
             db.commit()
     finally:
         db.close()
+
+
+def _migrate_ctrl_entry_metadata_columns() -> None:
+    """Add department/account metadata columns to controllable_budget_entries (idempotent)."""
+    with engine.connect() as conn:
+        table_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'controllable_budget_entries'"
+        )).scalar()
+        if not table_exists:
+            return
+        existing = {
+            row[0] for row in conn.execute(text(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'controllable_budget_entries'"
+            ))
+        }
+        for col, ddl in [
+            ("department_name",  "VARCHAR(255) NULL"),
+            ("account_group",    "VARCHAR(100) NULL"),
+            ("account_sub_group","VARCHAR(255) NULL"),
+            ("cost_element",     "VARCHAR(100) NULL"),
+            ("expense_type",     "VARCHAR(10) NULL"),
+        ]:
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE controllable_budget_entries ADD COLUMN {col} {ddl}"))
+        conn.commit()
+
+
+def _migrate_ctrl_override_quarterly() -> None:
+    """Replace extended_monthly_amount with per-quarter extended columns (idempotent)."""
+    with engine.connect() as conn:
+        table_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'controllable_line_overrides'"
+        )).scalar()
+        if not table_exists:
+            return
+        existing = {
+            row[0] for row in conn.execute(text(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'controllable_line_overrides'"
+            ))
+        }
+        if "extended_monthly_amount" in existing:
+            conn.execute(text("ALTER TABLE controllable_line_overrides DROP COLUMN extended_monthly_amount"))
+        for col in ["q1_extended", "q2_extended", "q3_extended", "q4_extended"]:
+            if col not in existing:
+                conn.execute(text(f"ALTER TABLE controllable_line_overrides ADD COLUMN {col} DECIMAL(14,2) NULL"))
+        conn.commit()
+
+
+def _migrate_activities_enriched_view() -> None:
+    """Create or replace v_activities_enriched — activity_ids joined to departments and account_numbers."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW v_activities_enriched AS
+            SELECT
+                ai.activity_id,
+                ai.activity_id_desc,
+                d.department_code,
+                d.department_name,
+                an.account_number,
+                an.account_group,
+                an.account_sub_group,
+                an.cost_element
+            FROM activity_ids ai
+            LEFT JOIN departments d ON d.department_code = ai.department_code
+            LEFT JOIN account_numbers an ON an.id = ai.account_id
+        """))
+        conn.commit()

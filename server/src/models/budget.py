@@ -134,3 +134,84 @@ class BudgetNcConfigAudit(Base):
     changes: Mapped[dict] = mapped_column(JSON, nullable=False)
     changed_by: Mapped[str] = mapped_column(String(255), nullable=False)
     changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class ControllableBudgetEntry(Base):
+    __tablename__ = "controllable_budget_entries"
+    __table_args__ = (
+        UniqueConstraint("scenario_id", "activity_id", name="uq_ctrl_entry_activity"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scenario_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("budget_scenarios.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    fiscal_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    activity_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    entry_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    department_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    account_group: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    account_sub_group: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cost_element: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    expense_type: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    entry_category: Mapped[str] = mapped_column(
+        Enum("EXISTING", "NEW_REQUEST", name="ctrl_entry_category_enum"), nullable=False
+    )
+    q1_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    q2_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    q3_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    q4_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    status: Mapped[str] = mapped_column(
+        Enum("DRAFT", "READY_FOR_REVIEW", "APPROVED", "FINAL", "CANCELLED", name="ctrl_entry_status_enum"),
+        nullable=False, default="DRAFT",
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    scenario: Mapped["BudgetScenario"] = relationship("BudgetScenario")
+
+
+class ControllableLineOverride(Base):
+    __tablename__ = "controllable_line_overrides"
+    __table_args__ = (
+        UniqueConstraint("scenario_id", "contract_line_id", name="uq_ctrl_line_override"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scenario_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("budget_scenarios.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    contract_line_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("contract_lines.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    action: Mapped[str] = mapped_column(
+        Enum("keep", "cancel", "extend", name="ctrl_line_action_enum"), nullable=False, default="keep"
+    )
+    q1_extended: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    q2_extended: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    q3_extended: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    q4_extended: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+
+class ControllableBudgetAudit(Base):
+    __tablename__ = "controllable_budget_audit"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entry_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    scenario_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    activity_id: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    entry_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    entry_category: Mapped[str] = mapped_column(String(20), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    changes: Mapped[dict] = mapped_column(JSON, nullable=False)
+    changed_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    changed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
