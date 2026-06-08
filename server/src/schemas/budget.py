@@ -251,6 +251,38 @@ class ScenarioCompareOut(BaseModel):
     totals: DeptCompareRow
 
 
+# ── Controllable Comparison ───────────────────────────────────────────────────
+
+class CtrlActivityCompareRow(BaseModel):
+    activity_id: Optional[str] = None
+    entry_label: Optional[str] = None
+    entry_category: str
+    account_group: Optional[str] = None
+    account_sub_group: Optional[str] = None
+    expense_type: Optional[str] = None
+    budget_a: ScenarioAmounts
+    budget_b: ScenarioAmounts
+    budget_delta: DeltaAmounts
+
+
+class CtrlDeptCompareRow(BaseModel):
+    department_name: str
+    rows: list[CtrlActivityCompareRow]
+    total_a: ScenarioAmounts
+    total_b: ScenarioAmounts
+    total_delta: DeltaAmounts
+
+
+class CtrlCompareOut(BaseModel):
+    fiscal_year: int
+    scenario_a: BudgetScenarioOut
+    scenario_b: BudgetScenarioOut
+    departments: list[CtrlDeptCompareRow]
+    totals_a: ScenarioAmounts
+    totals_b: ScenarioAmounts
+    totals_delta: DeltaAmounts
+
+
 # ── Controllable Budget ───────────────────────────────────────────────────────
 
 class ControllableEntryUpsert(BaseModel):

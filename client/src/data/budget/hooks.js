@@ -6,7 +6,8 @@ import {
   fetchNonControllablePlan, upsertEntry, deleteEntry,
   fetchScenarioComparison, updateEntryStatus, fetchScenarioAudit,
   fetchBudgetAuditReport,
-  fetchControllablePlan, upsertControllableEntry, deleteControllableEntry,
+  fetchControllablePlan, fetchControllableComparison,
+  upsertControllableEntry, deleteControllableEntry,
   updateControllableEntryStatus, upsertLineOverride,
 } from "./api";
 
@@ -208,6 +209,15 @@ export function useUpdateControllableEntryStatus() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["budget", "controllablePlan"] });
     },
+  });
+}
+
+export function useControllableComparison(fiscalYear, scenarioAId, scenarioBId) {
+  return useQuery({
+    queryKey: ["budget", "ctrlCompare", fiscalYear, scenarioAId, scenarioBId],
+    queryFn: () => fetchControllableComparison(fiscalYear, scenarioAId, scenarioBId),
+    enabled: fiscalYear != null && scenarioAId != null && scenarioBId != null && scenarioAId !== scenarioBId,
+    staleTime: 30_000,
   });
 }
 
