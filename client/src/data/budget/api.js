@@ -118,3 +118,11 @@ export async function upsertLineOverride(payload) {
   const { data } = await axios.put(`${BASE}/controllable/line-overrides`, payload);
   return data;
 }
+
+export async function fetchBudgetReport(fiscalYear, scenarioNcId, scenarioCtrlId) {
+  const params = { fiscal_year: fiscalYear };
+  if (scenarioNcId != null)   params.scenario_nc_id   = scenarioNcId;
+  if (scenarioCtrlId != null) params.scenario_ctrl_id = scenarioCtrlId;
+  const { data } = await axios.get(`${BASE}/reports/budget`, { params });
+  return data;
+}
