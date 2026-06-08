@@ -93,6 +93,7 @@ def init_db() -> None:
     _migrate_budget_nc_config()
     _migrate_budget_scenario_status()
     _migrate_budget_audit_view()
+    _migrate_controllable_audit_view()
     _migrate_spend_activity_id()
     _migrate_account_desc()
     _migrate_account_to_surrogate_key()
@@ -240,6 +241,10 @@ def _migrate_budget_audit_view() -> None:
                 JSON_UNQUOTE(JSON_EXTRACT(bea.changes, '$.status.old'))                  AS status_old,
                 JSON_UNQUOTE(JSON_EXTRACT(bea.changes, '$.status.new'))                  AS status_new,
 
+                -- NC entries never have activity_id changes
+                NULL                                                                      AS activity_id_old,
+                NULL                                                                      AS activity_id_new,
+
                 -- Current live state of the entry for reference
                 be.q1_amount                                                              AS current_q1,
                 be.q2_amount                                                              AS current_q2,
@@ -250,6 +255,52 @@ def _migrate_budget_audit_view() -> None:
             JOIN budget_entries be   ON be.id  = bea.entry_id
             JOIN budget_scenarios bs ON bs.id  = be.scenario_id
             ORDER BY bea.changed_at DESC
+        """))
+        conn.commit()
+
+
+def _migrate_controllable_audit_view() -> None:
+    """Create or replace v_controllable_budget_audit — same shape as v_budget_entry_audit
+    but sourced from controllable_budget_audit + controllable_budget_entries."""
+    with engine.connect() as conn:
+        conn.execute(text("""
+            CREATE OR REPLACE VIEW v_controllable_budget_audit AS
+            SELECT
+                cba.id                                                                        AS audit_id,
+                cba.entry_id,
+                bs.id                                                                         AS scenario_id,
+                bs.name                                                                       AS scenario_name,
+                bs.fiscal_year,
+                COALESCE(cbe.department_name, '—')                                       AS department_name,
+                COALESCE(cbe.entry_category, 'EXISTING')                                     AS entry_type,
+                cba.event_type,
+                cba.changed_by,
+                cba.changed_at,
+
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(cba.changes, '$.q1_amount.old')) AS DECIMAL(14,2)) AS q1_old,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(cba.changes, '$.q1_amount.new')) AS DECIMAL(14,2)) AS q1_new,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(cba.changes, '$.q2_amount.old')) AS DECIMAL(14,2)) AS q2_old,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(cba.changes, '$.q2_amount.new')) AS DECIMAL(14,2)) AS q2_new,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(cba.changes, '$.q3_amount.old')) AS DECIMAL(14,2)) AS q3_old,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(cba.changes, '$.q3_amount.new')) AS DECIMAL(14,2)) AS q3_new,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(cba.changes, '$.q4_amount.old')) AS DECIMAL(14,2)) AS q4_old,
+                CAST(JSON_UNQUOTE(JSON_EXTRACT(cba.changes, '$.q4_amount.new')) AS DECIMAL(14,2)) AS q4_new,
+
+                JSON_UNQUOTE(JSON_EXTRACT(cba.changes, '$.status.old'))                      AS status_old,
+                JSON_UNQUOTE(JSON_EXTRACT(cba.changes, '$.status.new'))                      AS status_new,
+
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(cba.changes, '$.activity_id.old')), 'null')  AS activity_id_old,
+                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(cba.changes, '$.activity_id.new')), 'null')  AS activity_id_new,
+
+                cbe.q1_amount                                                                 AS current_q1,
+                cbe.q2_amount                                                                 AS current_q2,
+                cbe.q3_amount                                                                 AS current_q3,
+                cbe.q4_amount                                                                 AS current_q4,
+                cbe.status                                                                    AS current_status
+            FROM controllable_budget_audit cba
+            JOIN budget_scenarios bs ON bs.id = cba.scenario_id
+            LEFT JOIN controllable_budget_entries cbe ON cbe.id = cba.entry_id
+            ORDER BY cba.changed_at DESC
         """))
         conn.commit()
 

@@ -180,6 +180,8 @@ class BudgetAuditReportRow(BaseModel):
     q4_new: Optional[Decimal] = None
     status_old: Optional[str] = None
     status_new: Optional[str] = None
+    activity_id_old: Optional[str] = None
+    activity_id_new: Optional[str] = None
     current_q1: Optional[Decimal] = None
     current_q2: Optional[Decimal] = None
     current_q3: Optional[Decimal] = None

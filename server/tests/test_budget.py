@@ -965,6 +965,27 @@ class TestControllableBudget:
         })
         assert r.status_code == 200
 
+    def test_line_override_writes_audit_row(self, bizadmin_client, db):
+        from src.models.budget import ControllableBudgetAudit
+        scenario = self._ctrl_scenario(db)
+        contract = self._contract_with_activity(db, activity_id="ACT-AUD", monthly=1000)
+        line_id = contract.lines[0].id
+        r = bizadmin_client.put("/api/budget/controllable/line-overrides", json={
+            "scenario_id": scenario.id,
+            "contract_line_id": line_id,
+            "action": "extend",
+            "q4_extended": 9999,
+        })
+        assert r.status_code == 200
+        audit_rows = db.query(ControllableBudgetAudit).filter(
+            ControllableBudgetAudit.scenario_id == scenario.id,
+            ControllableBudgetAudit.event_type == "AMOUNT_CHANGED",
+        ).all()
+        assert len(audit_rows) == 1
+        changes = audit_rows[0].changes
+        assert "q4_amount" in changes
+        assert changes["q4_amount"]["new"] == "9999.00"
+
     def test_readonly_cannot_set_override(self, readonly_client, db):
         scenario = self._ctrl_scenario(db)
         contract = self._contract_with_activity(db, activity_id="ACT-006", monthly=500)
@@ -1087,6 +1108,36 @@ class TestControllableBudget:
         })
         assert r.status_code == 200
         assert r.json()["activity_id"] == "AOPEX-9999999"
+
+    def test_activity_id_assignment_writes_audit_row(self, bizadmin_client, db):
+        # When an activity_id is assigned to a FINAL NEW_REQUEST entry via entry_id upsert,
+        # an UPDATED audit row must be written capturing the activity_id change.
+        from src.models.budget import ControllableBudgetAudit
+        scenario = self._ctrl_scenario(db)
+        entry = make_controllable_entry(
+            db, scenario.id,
+            entry_category="NEW_REQUEST", entry_label="Audit Test",
+            q1=Decimal("7000"), status="FINAL",
+        )
+        r = bizadmin_client.put("/api/budget/controllable/entries", json={
+            "entry_id": entry.id,
+            "scenario_id": scenario.id,
+            "fiscal_year": self.FY,
+            "activity_id": "AOPEX-1234567",
+            "entry_label": entry.entry_label,
+            "entry_category": "NEW_REQUEST",
+            "q1_amount": 7000,
+        })
+        assert r.status_code == 200
+        audit_rows = db.query(ControllableBudgetAudit).filter(
+            ControllableBudgetAudit.entry_id == entry.id,
+            ControllableBudgetAudit.event_type == "UPDATED",
+        ).all()
+        assert len(audit_rows) == 1
+        changes = audit_rows[0].changes
+        assert "activity_id" in changes
+        assert changes["activity_id"]["old"] is None
+        assert changes["activity_id"]["new"] == "AOPEX-1234567"
 
     def test_plan_returns_activity_id_on_new_request_after_assignment(self, admin_client, db):
         # Once an activity_id is assigned to a NEW_REQUEST entry it must appear

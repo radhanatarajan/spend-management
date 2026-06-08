@@ -575,21 +575,31 @@ def get_audit_report(
     db: Session = Depends(get_db),
     _: User = Depends(require_any),
 ):
-    rows = db.execute(
-        sa_text("""
-            SELECT audit_id, entry_id, scenario_id, scenario_name, fiscal_year,
-                   department_name, entry_type, event_type, changed_by, changed_at,
-                   q1_old, q1_new, q2_old, q2_new, q3_old, q3_new, q4_old, q4_new,
-                   status_old, status_new,
-                   current_q1, current_q2, current_q3, current_q4, current_status
-            FROM v_budget_entry_audit
-            WHERE fiscal_year = :fy
-            ORDER BY changed_at DESC
-        """),
+    _AUDIT_COLS = """
+        audit_id, entry_id, scenario_id, scenario_name, fiscal_year,
+        department_name, entry_type, event_type, changed_by, changed_at,
+        q1_old, q1_new, q2_old, q2_new, q3_old, q3_new, q4_old, q4_new,
+        status_old, status_new, activity_id_old, activity_id_new,
+        current_q1, current_q2, current_q3, current_q4, current_status
+    """
+    nc_rows = db.execute(
+        sa_text(f"SELECT {_AUDIT_COLS} FROM v_budget_entry_audit WHERE fiscal_year = :fy"),
+        {"fy": fiscal_year},
+    ).mappings().all()
+    ctrl_rows = db.execute(
+        sa_text(f"SELECT {_AUDIT_COLS} FROM v_controllable_budget_audit WHERE fiscal_year = :fy"),
         {"fy": fiscal_year},
     ).mappings().all()
 
-    row_list = [BudgetAuditReportRow(**dict(r)) for r in rows]
+    merged = sorted(
+        [dict(r) for r in nc_rows] + [dict(r) for r in ctrl_rows],
+        key=lambda r: r["changed_at"],
+        reverse=True,
+    )
+    for i, r in enumerate(merged):
+        r["audit_id"] = i + 1
+
+    row_list = [BudgetAuditReportRow(**r) for r in merged]
 
     filter_options = BudgetAuditFilterOptions(
         scenarios=sorted({r.scenario_name for r in row_list}),
@@ -1022,7 +1032,7 @@ def _quarter_for_month(month: int) -> str:
 def _serialize_ctrl(val) -> str:
     if val is None:
         return "null"
-    return str(val)
+    return str(Decimal(str(val)).quantize(Decimal("0.01")))
 
 
 @router.get("/controllable", response_model=ControllablePlanOut)
@@ -1286,6 +1296,7 @@ def upsert_controllable_entry(
         # block all other edits on FINAL entries
         if existing.status == "FINAL" and body.activity_id is None:
             raise HTTPException(status_code=403, detail="Cannot edit a FINAL entry")
+        old_activity_id = existing.activity_id
         old_amounts = {
             "q1_amount": _serialize_ctrl(existing.q1_amount),
             "q2_amount": _serialize_ctrl(existing.q2_amount),
@@ -1313,6 +1324,8 @@ def upsert_controllable_entry(
         }
         changes = {k: {"old": old_amounts[k], "new": new_amounts[k]}
                    for k in old_amounts if old_amounts[k] != new_amounts[k]}
+        if body.activity_id is not None and body.activity_id != old_activity_id:
+            changes["activity_id"] = {"old": old_activity_id, "new": body.activity_id}
         if changes:
             db.add(ControllableBudgetAudit(
                 entry_id=existing.id,
@@ -1431,10 +1444,21 @@ def upsert_line_override(
     if body.action not in ("keep", "cancel", "extend"):
         raise HTTPException(status_code=422, detail="action must be keep, cancel, or extend")
 
+    contract_line = db.get(ContractLine, body.contract_line_id)
+    if not contract_line:
+        raise HTTPException(status_code=404, detail="Contract line not found")
+
     existing = db.query(ControllableLineOverride).filter(
         ControllableLineOverride.scenario_id == body.scenario_id,
         ControllableLineOverride.contract_line_id == body.contract_line_id,
     ).first()
+
+    old_q = {
+        "q1_amount": _serialize_ctrl(existing.q1_extended if existing else None),
+        "q2_amount": _serialize_ctrl(existing.q2_extended if existing else None),
+        "q3_amount": _serialize_ctrl(existing.q3_extended if existing else None),
+        "q4_amount": _serialize_ctrl(existing.q4_extended if existing else None),
+    }
 
     if existing:
         existing.action = body.action
@@ -1442,21 +1466,46 @@ def upsert_line_override(
         existing.q2_extended = body.q2_extended
         existing.q3_extended = body.q3_extended
         existing.q4_extended = body.q4_extended
-        db.commit()
-        db.refresh(existing)
-        return existing
+        db.flush()
+    else:
+        override = ControllableLineOverride(
+            scenario_id=body.scenario_id,
+            contract_line_id=body.contract_line_id,
+            action=body.action,
+            q1_extended=body.q1_extended,
+            q2_extended=body.q2_extended,
+            q3_extended=body.q3_extended,
+            q4_extended=body.q4_extended,
+            created_by=current_user.email,
+        )
+        db.add(override)
+        db.flush()
+        existing = override
 
-    override = ControllableLineOverride(
-        scenario_id=body.scenario_id,
-        contract_line_id=body.contract_line_id,
-        action=body.action,
-        q1_extended=body.q1_extended,
-        q2_extended=body.q2_extended,
-        q3_extended=body.q3_extended,
-        q4_extended=body.q4_extended,
-        created_by=current_user.email,
-    )
-    db.add(override)
+    new_q = {
+        "q1_amount": _serialize_ctrl(body.q1_extended),
+        "q2_amount": _serialize_ctrl(body.q2_extended),
+        "q3_amount": _serialize_ctrl(body.q3_extended),
+        "q4_amount": _serialize_ctrl(body.q4_extended),
+    }
+    changes = {k: {"old": old_q[k], "new": new_q[k]} for k in old_q if old_q[k] != new_q[k]}
+    if changes:
+        entry = db.query(ControllableBudgetEntry).filter(
+            ControllableBudgetEntry.scenario_id == body.scenario_id,
+            ControllableBudgetEntry.activity_id == contract_line.activity_id,
+            ControllableBudgetEntry.entry_category == "EXISTING",
+        ).first()
+        db.add(ControllableBudgetAudit(
+            entry_id=entry.id if entry else None,
+            scenario_id=body.scenario_id,
+            activity_id=contract_line.activity_id,
+            entry_label=None,
+            entry_category="EXISTING",
+            event_type="AMOUNT_CHANGED",
+            changes=changes,
+            changed_by=current_user.email,
+        ))
+
     db.commit()
-    db.refresh(override)
-    return override
+    db.refresh(existing)
+    return existing
