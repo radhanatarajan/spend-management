@@ -12,13 +12,14 @@ Covers:
   - GET /api/budget/compare
   - ALLOWED_TRANSITIONS state machine
 """
+from datetime import date
 from decimal import Decimal
 
 import pytest
 
-from src.models.budget import BudgetEntryAudit
+from src.models.budget import BudgetEntryAudit, ControllableBudgetEntry, ControllableLineOverride
 from src.models.user import UserRole
-from tests.conftest import make_scenario, make_entry, make_spend
+from tests.conftest import make_scenario, make_entry, make_spend, make_contract
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -780,3 +781,325 @@ class TestBudgetNcConfigAudit:
         r = readonly_client.get("/api/budget/config/audit?fiscal_year=2027")
         assert r.status_code == 200
         assert len(r.json()) == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Controllable Budget
+# ══════════════════════════════════════════════════════════════════════════════
+
+def make_controllable_entry(db, scenario_id, activity_id=None, entry_label=None,
+                             entry_category="EXISTING", q1=None, q2=None, q3=None, q4=None,
+                             status="DRAFT"):
+    e = ControllableBudgetEntry(
+        scenario_id=scenario_id,
+        fiscal_year=2027,
+        activity_id=activity_id,
+        entry_label=entry_label,
+        entry_category=entry_category,
+        q1_amount=q1,
+        q2_amount=q2,
+        q3_amount=q3,
+        q4_amount=q4,
+        status=status,
+        created_by="admin@test.com",
+    )
+    db.add(e)
+    db.commit()
+    db.refresh(e)
+    return e
+
+
+def make_line_override(db, scenario_id, contract_line_id, action="keep",
+                       q1_extended=None, q2_extended=None, q3_extended=None, q4_extended=None):
+    o = ControllableLineOverride(
+        scenario_id=scenario_id,
+        contract_line_id=contract_line_id,
+        action=action,
+        q1_extended=q1_extended,
+        q2_extended=q2_extended,
+        q3_extended=q3_extended,
+        q4_extended=q4_extended,
+        created_by="admin@test.com",
+    )
+    db.add(o)
+    db.commit()
+    db.refresh(o)
+    return o
+
+
+class TestControllableBudget:
+    FY = 2027
+
+    def _ctrl_scenario(self, db, name="C-Baseline"):
+        return make_scenario(db, fiscal_year=self.FY, name=name, budget_type="CONTROLLABLE")
+
+    def _contract_with_activity(self, db, activity_id="ACT-001", monthly=1000, vendor="Vendor A"):
+        return make_contract(db, vendor=vendor, po=f"PO-{activity_id}", lines=[{
+            "po_line_number": 1,
+            "activity_id": activity_id,
+            "period_start": date(self.FY, 1, 1),
+            "period_end": date(self.FY, 12, 31),
+            "billing_interval": "monthly",
+            "entered_amount": Decimal(str(monthly)),
+        }])
+
+    # ── Plan endpoint ──────────────────────────────────────────────────────────
+
+    def test_plan_returns_rows_for_activity_ids_in_contracts(self, admin_client, db):
+        scenario = self._ctrl_scenario(db)
+        self._contract_with_activity(db, activity_id="ACT-001", monthly=5000)
+
+        r = admin_client.get(f"/api/budget/controllable?fiscal_year={self.FY}&scenario_id={scenario.id}")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["fiscal_year"] == self.FY
+        rows = data["rows"]
+        assert len(rows) == 1
+        assert rows[0]["activity_id"] == "ACT-001"
+        # 12 months × $5000/mo = $60,000
+        assert float(rows[0]["current_and_forecast"]) == pytest.approx(60000.0)
+
+    def test_plan_excludes_unassigned_lines(self, admin_client, db):
+        scenario = self._ctrl_scenario(db)
+        # Contract line with no activity_id
+        make_contract(db, vendor="No-Act", po="PO-NACT", lines=[{
+            "po_line_number": 1,
+            "activity_id": None,
+            "period_start": date(self.FY, 1, 1),
+            "period_end": date(self.FY, 12, 31),
+            "billing_interval": "monthly",
+            "entered_amount": Decimal("3000"),
+        }])
+        r = admin_client.get(f"/api/budget/controllable?fiscal_year={self.FY}&scenario_id={scenario.id}")
+        assert r.status_code == 200
+        assert r.json()["rows"] == []
+
+    def test_plan_shows_new_request_entries(self, admin_client, db):
+        scenario = self._ctrl_scenario(db)
+        make_controllable_entry(db, scenario.id, entry_label="New SaaS Vendor",
+                                entry_category="NEW_REQUEST", q1=Decimal("10000"))
+
+        r = admin_client.get(f"/api/budget/controllable?fiscal_year={self.FY}&scenario_id={scenario.id}")
+        assert r.status_code == 200
+        rows = r.json()["rows"]
+        new_rows = [ro for ro in rows if ro["entry_category"] == "NEW_REQUEST"]
+        assert len(new_rows) == 1
+        assert new_rows[0]["entry_label"] == "New SaaS Vendor"
+        assert float(new_rows[0]["current_and_forecast"]) == 0.0
+
+    def test_plan_syncs_contracted_amounts_to_entry(self, admin_client, db):
+        # For EXISTING rows, the plan endpoint auto-syncs contracted quarterly
+        # amounts into budget_entries. Pre-existing manual amounts are overwritten
+        # because q1-q4 in entries always mirror the contracted totals.
+        scenario = self._ctrl_scenario(db)
+        self._contract_with_activity(db, activity_id="ACT-002", monthly=2000)
+        # 2000/mo × 12 months → Q1=Q2=Q3=Q4 = 3 mo × 2000 = 6000 each, total 24000
+
+        r = admin_client.get(f"/api/budget/controllable?fiscal_year={self.FY}&scenario_id={scenario.id}")
+        assert r.status_code == 200
+        row = r.json()["rows"][0]
+        assert row["activity_id"] == "ACT-002"
+        # contracted quarterly totals auto-persisted to entry
+        assert float(row["q1_amount"]) == pytest.approx(6000.0)
+        assert float(row["total_budget"]) == pytest.approx(24000.0)
+        assert row["entry_id"] is not None  # entry auto-created
+        assert row["status"] == "DRAFT"
+
+    def test_plan_wrong_scenario_type_returns_404(self, admin_client, db):
+        nc_scenario = make_scenario(db, fiscal_year=self.FY, budget_type="NON_CONTROLLABLE")
+        r = admin_client.get(f"/api/budget/controllable?fiscal_year={self.FY}&scenario_id={nc_scenario.id}")
+        assert r.status_code == 404
+
+    # ── Line overrides ─────────────────────────────────────────────────────────
+
+    def test_cancel_override_zeroes_contribution(self, admin_client, bizadmin_client, db):
+        scenario = self._ctrl_scenario(db)
+        contract = self._contract_with_activity(db, activity_id="ACT-003", monthly=1000)
+        line_id = contract.lines[0].id
+
+        bizadmin_client.put("/api/budget/controllable/line-overrides", json={
+            "scenario_id": scenario.id,
+            "contract_line_id": line_id,
+            "action": "cancel",
+        })
+
+        r = admin_client.get(f"/api/budget/controllable?fiscal_year={self.FY}&scenario_id={scenario.id}")
+        row = r.json()["rows"][0]
+        # C+F is raw contracted total; cancel only zeroes the plan columns, not C+F
+        assert float(row["current_and_forecast"]) == pytest.approx(12000.0)
+        assert row["lines"][0]["override_action"] == "cancel"
+
+    def test_extend_override_applies_new_amount(self, admin_client, bizadmin_client, db):
+        scenario = self._ctrl_scenario(db)
+        contract = self._contract_with_activity(db, activity_id="ACT-004", monthly=1000)
+        line_id = contract.lines[0].id
+
+        # Override with quarterly extended amounts (Q1-Q4 of FY2027)
+        bizadmin_client.put("/api/budget/controllable/line-overrides", json={
+            "scenario_id": scenario.id,
+            "contract_line_id": line_id,
+            "action": "extend",
+            "q1_extended": 6000,
+            "q2_extended": 6000,
+            "q3_extended": 6000,
+            "q4_extended": 6000,
+        })
+
+        r = admin_client.get(f"/api/budget/controllable?fiscal_year={self.FY}&scenario_id={scenario.id}")
+        row = r.json()["rows"][0]
+        # C+F is raw contracted total; extend only affects plan columns, not C+F
+        assert float(row["current_and_forecast"]) == pytest.approx(12000.0)
+        # Plan columns reflect the extended amounts (Q1+Q2+Q3+Q4 = $24,000)
+        assert float(row["q1_contracted"]) + float(row["q2_contracted"]) + float(row["q3_contracted"]) + float(row["q4_contracted"]) == pytest.approx(24000.0)
+
+    def test_extend_accepts_partial_quarters(self, bizadmin_client, db):
+        # Extend with only some quarters set is valid (others default to 0)
+        scenario = self._ctrl_scenario(db)
+        contract = self._contract_with_activity(db, activity_id="ACT-005", monthly=1000)
+        line_id = contract.lines[0].id
+        r = bizadmin_client.put("/api/budget/controllable/line-overrides", json={
+            "scenario_id": scenario.id,
+            "contract_line_id": line_id,
+            "action": "extend",
+            "q1_extended": 5000,
+        })
+        assert r.status_code == 200
+
+    def test_readonly_cannot_set_override(self, readonly_client, db):
+        scenario = self._ctrl_scenario(db)
+        contract = self._contract_with_activity(db, activity_id="ACT-006", monthly=500)
+        r = readonly_client.put("/api/budget/controllable/line-overrides", json={
+            "scenario_id": scenario.id,
+            "contract_line_id": contract.lines[0].id,
+            "action": "cancel",
+        })
+        assert r.status_code == 403
+
+    # ── Entry upsert ───────────────────────────────────────────────────────────
+
+    def test_upsert_creates_entry(self, bizadmin_client, db):
+        scenario = self._ctrl_scenario(db)
+        self._contract_with_activity(db, activity_id="ACT-007", monthly=500)
+
+        r = bizadmin_client.put("/api/budget/controllable/entries", json={
+            "scenario_id": scenario.id,
+            "fiscal_year": self.FY,
+            "activity_id": "ACT-007",
+            "entry_category": "EXISTING",
+            "q1_amount": 15000,
+            "q2_amount": 15000,
+            "q3_amount": 15000,
+            "q4_amount": 15000,
+        })
+        assert r.status_code == 200
+        data = r.json()
+        assert data["activity_id"] == "ACT-007"
+        assert float(data["q1_amount"]) == pytest.approx(15000.0)
+
+    def test_upsert_updates_existing_entry(self, bizadmin_client, db):
+        scenario = self._ctrl_scenario(db)
+        self._contract_with_activity(db, activity_id="ACT-008", monthly=500)
+        bizadmin_client.put("/api/budget/controllable/entries", json={
+            "scenario_id": scenario.id, "fiscal_year": self.FY,
+            "activity_id": "ACT-008", "entry_category": "EXISTING",
+            "q1_amount": 1000,
+        })
+        r = bizadmin_client.put("/api/budget/controllable/entries", json={
+            "scenario_id": scenario.id, "fiscal_year": self.FY,
+            "activity_id": "ACT-008", "entry_category": "EXISTING",
+            "q1_amount": 9999,
+        })
+        assert r.status_code == 200
+        assert float(r.json()["q1_amount"]) == pytest.approx(9999.0)
+
+    def test_readonly_cannot_upsert(self, readonly_client, db):
+        scenario = self._ctrl_scenario(db)
+        r = readonly_client.put("/api/budget/controllable/entries", json={
+            "scenario_id": scenario.id, "fiscal_year": self.FY,
+            "entry_category": "NEW_REQUEST", "entry_label": "Test",
+        })
+        assert r.status_code == 403
+
+    # ── Status transitions ─────────────────────────────────────────────────────
+
+    def test_status_transition_draft_to_ready(self, bizadmin_client, db):
+        scenario = self._ctrl_scenario(db)
+        entry = make_controllable_entry(db, scenario.id, activity_id="ACT-009")
+        r = bizadmin_client.patch(f"/api/budget/controllable/entries/{entry.id}/status",
+                                  json={"status": "READY_FOR_REVIEW"})
+        assert r.status_code == 200
+        assert r.json()["status"] == "READY_FOR_REVIEW"
+
+    def test_status_transition_invalid_role_forbidden(self, serviceowner_client, db):
+        scenario = self._ctrl_scenario(db)
+        entry = make_controllable_entry(db, scenario.id, activity_id="ACT-010",
+                                        status="READY_FOR_REVIEW")
+        # SERVICE_OWNER cannot approve
+        r = serviceowner_client.patch(f"/api/budget/controllable/entries/{entry.id}/status",
+                                      json={"status": "APPROVED"})
+        assert r.status_code == 403
+
+    def test_status_transition_invalid_transition_forbidden(self, bizadmin_client, db):
+        scenario = self._ctrl_scenario(db)
+        entry = make_controllable_entry(db, scenario.id, activity_id="ACT-011", status="DRAFT")
+        # Cannot go directly DRAFT → FINAL
+        r = bizadmin_client.patch(f"/api/budget/controllable/entries/{entry.id}/status",
+                                  json={"status": "FINAL"})
+        assert r.status_code == 403
+
+    def test_readonly_cannot_transition(self, readonly_client, db):
+        scenario = self._ctrl_scenario(db)
+        entry = make_controllable_entry(db, scenario.id, activity_id="ACT-012")
+        r = readonly_client.patch(f"/api/budget/controllable/entries/{entry.id}/status",
+                                  json={"status": "READY_FOR_REVIEW"})
+        assert r.status_code == 403
+
+    def test_expense_type_stored_and_returned(self, bizadmin_client, db):
+        scenario = self._ctrl_scenario(db)
+        r = bizadmin_client.put("/api/budget/controllable/entries", json={
+            "scenario_id": scenario.id,
+            "fiscal_year": self.FY,
+            "entry_category": "NEW_REQUEST",
+            "entry_label": "Capex Tool",
+            "expense_type": "capex",
+            "q1_amount": 5000,
+        })
+        assert r.status_code == 200
+        assert r.json()["expense_type"] == "capex"
+
+    def test_upsert_by_entry_id_links_activity_id(self, bizadmin_client, admin_client, db):
+        # Simulate the post-FINAL "Create Activity ID" flow: upsert using entry_id
+        # to assign an activity_id to a NEW_REQUEST entry that is FINAL.
+        scenario = self._ctrl_scenario(db)
+        entry = make_controllable_entry(
+            db, scenario.id,
+            entry_category="NEW_REQUEST", entry_label="Acme Software",
+            q1=Decimal("10000"), status="FINAL",
+        )
+        r = bizadmin_client.put("/api/budget/controllable/entries", json={
+            "entry_id": entry.id,
+            "scenario_id": scenario.id,
+            "fiscal_year": self.FY,
+            "activity_id": "AOPEX-9999999",
+            "entry_label": entry.entry_label,
+            "entry_category": "NEW_REQUEST",
+            "q1_amount": 10000,
+        })
+        assert r.status_code == 200
+        assert r.json()["activity_id"] == "AOPEX-9999999"
+
+    def test_plan_returns_activity_id_on_new_request_after_assignment(self, admin_client, db):
+        # Once an activity_id is assigned to a NEW_REQUEST entry it must appear
+        # in the plan row so the UI can display it.
+        scenario = self._ctrl_scenario(db)
+        make_controllable_entry(
+            db, scenario.id,
+            activity_id="AOPEX-8888888",
+            entry_category="NEW_REQUEST", entry_label="Linked Request",
+            q1=Decimal("5000"),
+        )
+        r = admin_client.get(f"/api/budget/controllable?fiscal_year={self.FY}&scenario_id={scenario.id}")
+        assert r.status_code == 200
+        new_rows = [ro for ro in r.json()["rows"] if ro["entry_category"] == "NEW_REQUEST"]
+        assert len(new_rows) == 1
+        assert new_rows[0]["activity_id"] == "AOPEX-8888888"
