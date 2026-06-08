@@ -93,6 +93,13 @@ export async function fetchControllablePlan(fiscalYear, scenarioId) {
   return data;
 }
 
+export async function fetchControllableComparison(fiscalYear, scenarioAId, scenarioBId) {
+  const { data } = await axios.get(`${BASE}/controllable/compare`, {
+    params: { fiscal_year: fiscalYear, scenario_a_id: scenarioAId, scenario_b_id: scenarioBId },
+  });
+  return data;
+}
+
 export async function upsertControllableEntry(payload) {
   const { data } = await axios.put(`${BASE}/controllable/entries`, payload);
   return data;

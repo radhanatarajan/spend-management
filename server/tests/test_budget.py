@@ -1154,3 +1154,68 @@ class TestControllableBudget:
         new_rows = [ro for ro in r.json()["rows"] if ro["entry_category"] == "NEW_REQUEST"]
         assert len(new_rows) == 1
         assert new_rows[0]["activity_id"] == "AOPEX-8888888"
+
+    # ── Controllable comparison ────────────────────────────────────────────────
+
+    def test_compare_returns_delta_between_two_scenarios(self, admin_client, db):
+        sc_a = self._ctrl_scenario(db, name="Ctrl-A")
+        sc_b = self._ctrl_scenario(db, name="Ctrl-B")
+        make_controllable_entry(db, sc_a.id, activity_id="CMP-001", entry_category="EXISTING",
+                                q1=Decimal("10000"), q2=Decimal("10000"))
+        make_controllable_entry(db, sc_b.id, activity_id="CMP-001", entry_category="EXISTING",
+                                q1=Decimal("12000"), q2=Decimal("10000"))
+
+        r = admin_client.get(
+            f"/api/budget/controllable/compare"
+            f"?fiscal_year={self.FY}&scenario_a_id={sc_a.id}&scenario_b_id={sc_b.id}"
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["scenario_a"]["name"] == "Ctrl-A"
+        assert data["scenario_b"]["name"] == "Ctrl-B"
+        assert len(data["departments"]) >= 1
+        # Find the row for CMP-001
+        rows = [row for dept in data["departments"] for row in dept["rows"] if row["activity_id"] == "CMP-001"]
+        assert len(rows) == 1
+        row = rows[0]
+        assert float(row["budget_a"]["q1"]) == pytest.approx(10000.0)
+        assert float(row["budget_b"]["q1"]) == pytest.approx(12000.0)
+        assert float(row["budget_delta"]["q1"]) == pytest.approx(2000.0)
+        assert float(row["budget_delta"]["q2"]) == pytest.approx(0.0)
+        # Annual totals
+        assert float(data["totals_a"]["annual"]) == pytest.approx(20000.0)
+        assert float(data["totals_b"]["annual"]) == pytest.approx(22000.0)
+        assert float(data["totals_delta"]["annual"]) == pytest.approx(2000.0)
+
+    def test_compare_entry_only_in_one_scenario_shows_zero_other_side(self, admin_client, db):
+        sc_a = self._ctrl_scenario(db, name="Ctrl-C")
+        sc_b = self._ctrl_scenario(db, name="Ctrl-D")
+        # Entry only in A
+        make_controllable_entry(db, sc_a.id, activity_id="CMP-002", entry_category="EXISTING",
+                                q1=Decimal("5000"))
+        # Different entry only in B
+        make_controllable_entry(db, sc_b.id, entry_label="Extra Request", entry_category="NEW_REQUEST",
+                                q4=Decimal("3000"))
+
+        r = admin_client.get(
+            f"/api/budget/controllable/compare"
+            f"?fiscal_year={self.FY}&scenario_a_id={sc_a.id}&scenario_b_id={sc_b.id}"
+        )
+        assert r.status_code == 200
+        data = r.json()
+        all_rows = [row for dept in data["departments"] for row in dept["rows"]]
+        cmp002 = next(row for row in all_rows if row["activity_id"] == "CMP-002")
+        assert float(cmp002["budget_a"]["q1"]) == pytest.approx(5000.0)
+        assert float(cmp002["budget_b"]["q1"]) == pytest.approx(0.0)
+        extra = next(row for row in all_rows if row["entry_label"] == "Extra Request")
+        assert float(extra["budget_a"]["q4"]) == pytest.approx(0.0)
+        assert float(extra["budget_b"]["q4"]) == pytest.approx(3000.0)
+
+    def test_compare_wrong_budget_type_returns_404(self, admin_client, db):
+        ctrl = self._ctrl_scenario(db, name="Ctrl-E")
+        nc = make_scenario(db, fiscal_year=self.FY, budget_type="NON_CONTROLLABLE")
+        r = admin_client.get(
+            f"/api/budget/controllable/compare"
+            f"?fiscal_year={self.FY}&scenario_a_id={ctrl.id}&scenario_b_id={nc.id}"
+        )
+        assert r.status_code == 404

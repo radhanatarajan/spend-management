@@ -2,11 +2,13 @@ import { useState } from "react";
 import NonControllablePage from "./NonControllablePage";
 import NcScenarioComparisonPage from "./NcScenarioComparisonPage";
 import ControllablePage from "./ControllablePage";
+import CtrlScenarioComparisonPage from "./CtrlScenarioComparisonPage";
 
 const TABS = [
-  { id: "non-controllable", label: "Non-Controllable", desc: "Employee-related costs" },
-  { id: "nc-comparison",    label: "NC Scenario Comparison", desc: "Compare scenarios side by side" },
-  { id: "controllable",     label: "Controllable", desc: "Vendor & contract costs" },
+  { id: "non-controllable",   label: "Non-Controllable",           desc: "Employee-related costs" },
+  { id: "nc-comparison",      label: "NC Scenario Comparison",     desc: "Compare scenarios side by side" },
+  { id: "controllable",       label: "Controllable",               desc: "Vendor & contract costs" },
+  { id: "ctrl-comparison",    label: "Ctrl Scenario Comparison",   desc: "Compare controllable scenarios" },
 ];
 
 export default function BudgetPlanningPage() {
@@ -40,8 +42,9 @@ export default function BudgetPlanningPage() {
 
       {/* Tab content */}
       {activeTab === "non-controllable" && <NonControllablePage />}
-      {activeTab === "nc-comparison" && <NcScenarioComparisonPage />}
-      {activeTab === "controllable" && <ControllablePage />}
+      {activeTab === "nc-comparison"    && <NcScenarioComparisonPage />}
+      {activeTab === "controllable"     && <ControllablePage />}
+      {activeTab === "ctrl-comparison"  && <CtrlScenarioComparisonPage />}
     </div>
   );
 }

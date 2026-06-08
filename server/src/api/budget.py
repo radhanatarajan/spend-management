@@ -26,6 +26,7 @@ from src.schemas.budget import (
     ControllableEntryUpsert, ControllableEntryOut, ControllableEntryStatusUpdate,
     ControllableLineOverrideUpsert, ControllableLineOverrideOut,
     ControllableLineDetail, ControllablePlanRow, ControllablePlanOut,
+    CtrlActivityCompareRow, CtrlDeptCompareRow, CtrlCompareOut,
 )
 
 router = APIRouter(prefix="/api/budget", tags=["budget"])
@@ -964,6 +965,109 @@ def compare_scenarios(
         all_scenarios=all_scenarios,
         departments=departments,
         totals=totals,
+    )
+
+
+@router.get("/controllable/compare", response_model=CtrlCompareOut)
+def compare_controllable_scenarios(
+    fiscal_year: int = Query(...),
+    scenario_a_id: int = Query(...),
+    scenario_b_id: int = Query(...),
+    db: Session = Depends(get_db),
+    _: User = Depends(require_any),
+):
+    scenario_a = db.get(BudgetScenario, scenario_a_id)
+    scenario_b = db.get(BudgetScenario, scenario_b_id)
+    if not scenario_a or scenario_a.budget_type != "CONTROLLABLE":
+        raise HTTPException(status_code=404, detail="Scenario A not found")
+    if not scenario_b or scenario_b.budget_type != "CONTROLLABLE":
+        raise HTTPException(status_code=404, detail="Scenario B not found")
+
+    entries_a = db.execute(
+        select(ControllableBudgetEntry).where(ControllableBudgetEntry.scenario_id == scenario_a_id)
+    ).scalars().all()
+    entries_b = db.execute(
+        select(ControllableBudgetEntry).where(ControllableBudgetEntry.scenario_id == scenario_b_id)
+    ).scalars().all()
+
+    # Look up activity metadata for EXISTING entries (department, account group)
+    all_act_ids = {e.activity_id for e in (entries_a + entries_b) if e.activity_id}
+    activity_meta: dict[str, dict] = {}
+    if all_act_ids:
+        for ai, an, dept in (
+            db.query(ActivityId, AccountNumber, Department)
+            .outerjoin(AccountNumber, ActivityId.account_id == AccountNumber.id)
+            .outerjoin(Department, ActivityId.department_code == Department.department_code)
+            .filter(ActivityId.activity_id.in_(all_act_ids))
+            .all()
+        ):
+            activity_meta[ai.activity_id] = {
+                "department_name": dept.department_name if dept else None,
+                "account_group": an.account_group if an else None,
+                "account_sub_group": an.account_sub_group if an else None,
+            }
+
+    def _entry_key(e: ControllableBudgetEntry):
+        return ("EXISTING", e.activity_id) if e.entry_category == "EXISTING" else ("NEW_REQUEST", e.entry_label)
+
+    def _dept_for(e: ControllableBudgetEntry) -> str:
+        if e.activity_id:
+            return activity_meta.get(e.activity_id, {}).get("department_name") or e.department_name or "—"
+        return e.department_name or "—"
+
+    def _expense_type(e: ControllableBudgetEntry) -> str:
+        if e.activity_id and e.activity_id.startswith("ACAPEX-"):
+            return "capex"
+        return e.expense_type or "opex"
+
+    map_a = {_entry_key(e): e for e in entries_a}
+    map_b = {_entry_key(e): e for e in entries_b}
+    all_keys = sorted(set(map_a) | set(map_b), key=lambda k: (k[0], k[1] or ""))
+
+    dept_groups: dict[str, list[CtrlActivityCompareRow]] = {}
+    for key in all_keys:
+        ea = map_a.get(key)
+        eb = map_b.get(key)
+        ref = ea or eb
+        dept = _dept_for(ref)
+        meta = activity_meta.get(ref.activity_id, {}) if ref.activity_id else {}
+        ba = _make_scenario_amounts(ea.q1_amount, ea.q2_amount, ea.q3_amount, ea.q4_amount) if ea else _zero_amounts()
+        bb = _make_scenario_amounts(eb.q1_amount, eb.q2_amount, eb.q3_amount, eb.q4_amount) if eb else _zero_amounts()
+        dept_groups.setdefault(dept, []).append(CtrlActivityCompareRow(
+            activity_id=ref.activity_id,
+            entry_label=ref.entry_label,
+            entry_category=ref.entry_category,
+            account_group=meta.get("account_group") or ref.account_group,
+            account_sub_group=meta.get("account_sub_group") or ref.account_sub_group,
+            expense_type=_expense_type(ref),
+            budget_a=ba,
+            budget_b=bb,
+            budget_delta=_make_delta(ba, bb),
+        ))
+
+    departments: list[CtrlDeptCompareRow] = []
+    for dept_name in sorted(dept_groups):
+        rows = dept_groups[dept_name]
+        ta = _sum_scenario_amounts([r.budget_a for r in rows])
+        tb = _sum_scenario_amounts([r.budget_b for r in rows])
+        departments.append(CtrlDeptCompareRow(
+            department_name=dept_name,
+            rows=rows,
+            total_a=ta,
+            total_b=tb,
+            total_delta=_make_delta(ta, tb),
+        ))
+
+    totals_a = _sum_scenario_amounts([d.total_a for d in departments])
+    totals_b = _sum_scenario_amounts([d.total_b for d in departments])
+    return CtrlCompareOut(
+        fiscal_year=fiscal_year,
+        scenario_a=scenario_a,
+        scenario_b=scenario_b,
+        departments=departments,
+        totals_a=totals_a,
+        totals_b=totals_b,
+        totals_delta=_make_delta(totals_a, totals_b),
     )
 
 

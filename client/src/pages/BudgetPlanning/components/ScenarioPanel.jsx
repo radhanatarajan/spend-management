@@ -1,7 +1,10 @@
 import { useState } from "react";
 import { useCreateScenario, useUpdateScenario, useDeleteScenario } from "../../../data/budget/hooks";
 
+const TYPE_PREFIX = { NON_CONTROLLABLE: "NC", CONTROLLABLE: "C" };
+
 export default function ScenarioPanel({ scenarios, selectedId, onSelect, fiscalYear, compact, budgetType = "NON_CONTROLLABLE" }) {
+  const prefix = TYPE_PREFIX[budgetType] ?? "";
   const [showCreate, setShowCreate] = useState(false);
   const [showRename, setShowRename] = useState(null);
   const [newName, setNewName] = useState("");
@@ -18,7 +21,7 @@ export default function ScenarioPanel({ scenarios, selectedId, onSelect, fiscalY
     if (!newName.trim()) return;
     createScenario.mutate(
       {
-        name: newName.trim(),
+        name: prefix ? `${prefix} ${newName.trim()}` : newName.trim(),
         description: newDesc.trim() || null,
         fiscal_year: fiscalYear,
         budget_type: budgetType,
@@ -155,14 +158,21 @@ export default function ScenarioPanel({ scenarios, selectedId, onSelect, fiscalY
             <div className="space-y-3">
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Name</label>
-                <input
-                  autoFocus
-                  className="w-full text-sm border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-300"
-                  placeholder="e.g. Aggressive FY2027"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleCreate()}
-                />
+                <div className="flex items-center border border-gray-200 rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-indigo-300">
+                  {prefix && (
+                    <span className="px-3 py-2 text-sm font-medium text-indigo-600 bg-indigo-50 border-r border-gray-200 shrink-0 select-none">
+                      {prefix}
+                    </span>
+                  )}
+                  <input
+                    autoFocus
+                    className="flex-1 text-sm px-3 py-2 focus:outline-none"
+                    placeholder="e.g. Aggressive FY2027"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+                  />
+                </div>
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Description (optional)</label>
