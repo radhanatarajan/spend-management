@@ -98,6 +98,8 @@ class BudgetEntryOut(BaseModel):
     scenario_id: int
     department_name: str
     entry_type: str
+    expense_type: str = "Opex"
+    activity_id: Optional[str] = None
     q1_amount: Optional[Decimal]
     q2_amount: Optional[Decimal]
     q3_amount: Optional[Decimal]

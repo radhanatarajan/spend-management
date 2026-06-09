@@ -1252,7 +1252,7 @@ class TestBudgetReport:
         assert len(ctrl_rows) == 1
 
         assert nc_rows[0]["department_name"] == "Engineering"
-        assert nc_rows[0]["expense_type"]    is None
+        assert nc_rows[0]["expense_type"]    == "Opex"
         assert nc_rows[0]["activity_id"]     is None
         assert float(nc_rows[0]["q1_amount"]) == pytest.approx(100000.0)
 

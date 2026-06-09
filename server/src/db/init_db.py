@@ -115,6 +115,7 @@ def init_db() -> None:
     _migrate_activities_enriched_view()
     _migrate_ctrl_override_quarterly()
     _migrate_ctrl_entry_metadata_columns()
+    _migrate_budget_entry_activity_id()
     _seed_db()
     _seed_users()
     _seed_contracts()
@@ -128,6 +129,7 @@ def init_db() -> None:
     _backfill_spend_departments()
     _backfill_spend_activities()
     _assign_nc_activity_ids()
+    _assign_nc_budget_activity_ids()
     _seed_saas_contract_account_ids()
     _backfill_account_desc()
 
@@ -1857,6 +1859,55 @@ def _seed_saas_contract_account_ids() -> None:
             db.commit()
     finally:
         db.close()
+
+
+def _migrate_budget_entry_activity_id() -> None:
+    """Add activity_id and expense_type columns to budget_entries if missing (idempotent)."""
+    with engine.connect() as conn:
+        table_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'budget_entries'"
+        )).scalar()
+        if not table_exists:
+            return
+        existing = {
+            row[0] for row in conn.execute(text(
+                "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'budget_entries'"
+            ))
+        }
+        changed = False
+        if "activity_id" not in existing:
+            conn.execute(text("ALTER TABLE budget_entries ADD COLUMN activity_id VARCHAR(64)"))
+            changed = True
+        if "expense_type" not in existing:
+            conn.execute(text("ALTER TABLE budget_entries ADD COLUMN expense_type VARCHAR(50) NOT NULL DEFAULT 'Opex'"))
+            changed = True
+        if changed:
+            conn.commit()
+
+
+def _assign_nc_budget_activity_ids() -> None:
+    """Set activity_id = NC-{dept_code}-ACC-0301 on budget_entries rows where it's null.
+
+    Defaults to the Salaries account (ACC-0301) for all NC budget entries.
+    MySQL-only (uses JOIN in UPDATE). Idempotent.
+    """
+    with engine.connect() as conn:
+        col_exists = conn.execute(text(
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'budget_entries' "
+            "AND COLUMN_NAME = 'activity_id'"
+        )).scalar()
+        if not col_exists:
+            return
+        conn.execute(text("""
+            UPDATE budget_entries be
+            JOIN departments d ON d.department_name = be.department_name
+            SET be.activity_id = CONCAT('NC-', d.department_code, '-ACC-0301')
+            WHERE be.activity_id IS NULL
+        """))
+        conn.commit()
 
 
 def _assign_nc_activity_ids() -> None:
