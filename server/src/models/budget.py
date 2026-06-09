@@ -65,6 +65,8 @@ class BudgetEntry(Base):
     q3_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     q4_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expense_type: Mapped[str] = mapped_column(String(50), nullable=False, default="Opex")
+    activity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(
         Enum("DRAFT", "READY_FOR_REVIEW", "APPROVED", "FINAL", "CANCELLED", name="entry_status_enum"),
         nullable=False, default="DRAFT",

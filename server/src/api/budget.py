@@ -650,15 +650,39 @@ def get_budget_report(
 
     rows: list[BudgetReportRow] = []
 
-    # NC rows
+    # NC rows — enrich from ActivityId → AccountNumber using activity_id on the entry
     nc_entries = db.execute(
         select(BudgetEntry).where(BudgetEntry.scenario_id == scenario_nc.id)
     ).scalars().all()
+
+    nc_act_ids = {e.activity_id for e in nc_entries if e.activity_id}
+    nc_activity_meta: dict[str, dict] = {}
+    if nc_act_ids:
+        for ai, an in (
+            db.query(ActivityId, AccountNumber)
+            .outerjoin(AccountNumber, ActivityId.account_id == AccountNumber.id)
+            .filter(ActivityId.activity_id.in_(nc_act_ids))
+            .all()
+        ):
+            nc_activity_meta[ai.activity_id] = {
+                "cost_element":      an.cost_element      if an else None,
+                "account_group":     an.account_group     if an else None,
+                "account_sub_group": an.account_sub_group if an else None,
+                "account_number":    an.account_number    if an else None,
+            }
+
     for e in nc_entries:
+        meta = nc_activity_meta.get(e.activity_id, {}) if e.activity_id else {}
         rows.append(BudgetReportRow(
             source="NC",
             department_name=e.department_name,
             entry_type=e.entry_type,
+            expense_type=e.expense_type,
+            cost_element=meta.get("cost_element"),
+            account_group=meta.get("account_group"),
+            account_sub_group=meta.get("account_sub_group"),
+            account_number=meta.get("account_number"),
+            activity_id=e.activity_id,
             q1_amount=e.q1_amount or Decimal("0"),
             q2_amount=e.q2_amount or Decimal("0"),
             q3_amount=e.q3_amount or Decimal("0"),
