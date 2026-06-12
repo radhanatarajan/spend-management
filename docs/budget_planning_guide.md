@@ -6,7 +6,12 @@
 
 ## 1. Overview
 
-The Budget Planning module supports annual budget preparation across two distinct cost categories: **Non-Controllable** (headcount-driven spend like salaries) and **Controllable** (vendor contracts and discretionary spend). Each category is planned independently with its own scenario model, and the results are consolidated in the Budget Report.
+The Budget Planning module supports annual budget preparation across two distinct cost categories:
+
+- **Non-Controllable (NC)** — headcount-driven spend. These costs move with your people and cannot be reduced without a staffing decision. Examples: Salaries, Pager Pay, Overtime, Spot Bonus, Travel, Training, Staff Related Expenses.
+- **Controllable (CTRL)** — recurring vendor and technology spend. These costs can be renegotiated, cancelled, or avoided. Examples: Software Maintenance, Hardware Maintenance, Expensed Equipment, Expensed Software, Expensed Software – Recurring.
+
+Each category is planned independently with its own scenario model, and the results are consolidated in the Budget Report.
 
 **Navigation**
 
@@ -74,7 +79,19 @@ Both NC entries (`budget_entries`) and CTRL entries (`controllable_budget_entrie
 
 ### 4.1 What is Non-Controllable?
 
-Non-Controllable spend is headcount-driven — primarily salaries, benefits, and employee-related costs. Departments cannot reduce this spend without headcount decisions. The NC budget is planned at the department level with two entry types:
+**Non-Controllable (NC)** spend moves with your headcount. If you have the people, you have the cost — there is no lever to pull without a staffing decision. It is classified under the **Employee Related** cost element in the GL.
+
+**Typical NC line items:**
+
+| Category | Examples |
+|---|---|
+| Base compensation | Salaries |
+| Additional pay | Pager Pay, Overtime, Spot Bonus |
+| Employee development | Training, Conferences |
+| Employee travel | Travel & Expenses |
+| Other people costs | Staff Related Expenses |
+
+The NC budget is planned at the department level with two entry types:
 
 | Entry Type | Meaning |
 |---|---|
@@ -130,7 +147,16 @@ If no cutoff is configured, the system auto-detects the last available month in 
 
 ### 5.1 What is Controllable?
 
-Controllable spend is vendor-driven — software licenses, SaaS subscriptions, professional services, and similar contracted costs. Departments can renegotiate or cancel these. Each line is tied to an `activity_id` that links the contract database to the budget.
+**Controllable (CTRL)** spend is driven by vendor agreements and technology decisions — not by headcount. Departments have a direct lever: they can renegotiate, cancel, or avoid these costs. Each line is tied to an `activity_id` that links the contract database to the budget.
+
+**Typical CTRL line items:**
+
+| Category | Examples |
+|---|---|
+| Software contracts | Software Maintenance, Expensed Software, Expensed Software – Recurring |
+| Hardware contracts | Hardware Maintenance, Expensed Equipment |
+| Managed services | Outsourced support, cloud infrastructure |
+| One-time purchases | Tooling, equipment not capitalized |
 
 CTRL entries have two categories:
 

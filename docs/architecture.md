@@ -8,6 +8,10 @@
 
 Three-tier web application: React frontend, FastAPI backend, MySQL database. Auth is JWT-based with four roles (Admin, BizAdmin, ServiceOwner, ReadOnly).
 
+> **Terminology note**
+> - **NC (Non-Controllable)** — headcount-driven spend that cannot be reduced without a staffing decision: Salaries, Pager Pay, Overtime, Spot Bonus, Travel, Training, Staff Related Expenses. Classified under the *Employee Related* cost element.
+> - **CTRL (Controllable)** — vendor and technology spend that can be renegotiated or cancelled: Software Maintenance, Hardware Maintenance, Expensed Equipment, Expensed Software, Expensed Software – Recurring, managed services.
+
 ```mermaid
 flowchart TD
     User(["User\n(Browser)"])
