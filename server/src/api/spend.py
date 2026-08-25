@@ -3,13 +3,15 @@ import io
 from decimal import Decimal
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, distinct
 from sqlalchemy.orm import Session
 
+from src.core.dependencies import require_any
 from src.db.session import get_db
 from src.models.spend import Spend
+from src.models.user import User
 from src.schemas.spend import (
     PaginatedSpend,
     SpendRead,
@@ -19,7 +21,10 @@ from src.schemas.spend import (
     SpendSummary,
     AmountByLabel,
     MonthTrend,
+    GapAgentChatRequest,
+    GapAgentChatResponse,
 )
+from src.services.gap_agent_service import run_agent_chat, GapAgentUnavailableError
 
 router = APIRouter(prefix="/api/spend", tags=["spend"])
 
@@ -342,3 +347,16 @@ def export_spend_csv(
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=spend_export.csv"},
     )
+
+
+@router.post("/reports/gaps-agent/chat", response_model=GapAgentChatResponse)
+async def gap_agent_chat(
+    body: GapAgentChatRequest,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_any),
+):
+    try:
+        result = await run_agent_chat(db, [m.model_dump() for m in body.messages])
+    except GapAgentUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    return GapAgentChatResponse(**result)

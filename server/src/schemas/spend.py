@@ -85,3 +85,56 @@ class SpendSummary(BaseModel):
     by_month: List[MonthTrend]
     by_cost_element: List[AmountByLabel]
     by_activity_id: List[AmountByLabel]
+
+
+class SpendAccountGapRow(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    account_number: Optional[str] = None
+    account_group: Optional[str] = None
+    account_sub_group: Optional[str] = None
+    cost_element: Optional[str] = None
+    spend_row_count: int
+    earliest_month: Optional[str] = None
+    latest_month: Optional[str] = None
+
+
+class SpendDepartmentGapRow(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    department_code: Optional[str] = None
+    department_name: Optional[str] = None
+    spend_row_count: int
+    earliest_month: Optional[str] = None
+    latest_month: Optional[str] = None
+
+
+class SpendActivityGapRow(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    activity_id: Optional[str] = None
+    department_code: Optional[str] = None
+    department_name: Optional[str] = None
+    account_group: Optional[str] = None
+    spend_row_count: int
+    earliest_month: Optional[str] = None
+    latest_month: Optional[str] = None
+
+
+class ChatMessage(BaseModel):
+    role: str  # "user" | "assistant" — "system"/"tool" roles are injected server-side only
+    content: str
+
+
+class GapAgentChatRequest(BaseModel):
+    messages: List[ChatMessage]
+
+
+class ToolCallLog(BaseModel):
+    name: str
+    arguments: dict
+
+
+class GapAgentChatResponse(BaseModel):
+    message: str
+    tools_called: List[ToolCallLog] = []

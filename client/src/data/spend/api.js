@@ -36,6 +36,11 @@ export async function fetchSpendSummary(filters = {}) {
   return data;
 }
 
+export async function chatWithGapsAgent(messages) {
+  const { data } = await axios.post(`${BASE}/reports/gaps-agent/chat`, { messages });
+  return data;
+}
+
 export async function downloadSpendCsv(filters = {}) {
   const { month_keys, expense_types, company_codes, oracle_departments,
           oracle_account_groups, vendors, je_sources, activity_ids } = filters;

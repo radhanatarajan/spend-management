@@ -10,6 +10,7 @@ dependencies = [
     "cryptography>=48.0.0",
     "fastapi>=0.136.1",
     "numpy>=2.4.4",
+    "ollama>=0.4.0",
     "pandas>=3.0.3",
     "passlib>=1.7.4",
     "pydantic-settings>=2.14.1",

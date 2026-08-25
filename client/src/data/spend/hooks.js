@@ -1,5 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
-import { fetchSpend, fetchSpendFilterOptions, fetchSpendSummary } from "./api";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { fetchSpend, fetchSpendFilterOptions, fetchSpendSummary, chatWithGapsAgent } from "./api";
 import { QUERY_KEYS } from "./constants";
 
 export function useSpend(filters) {
@@ -27,4 +27,8 @@ export function useSpendSummary(filters) {
     staleTime: 60_000,
     placeholderData: (prev) => prev,
   });
+}
+
+export function useGapsAgentChat() {
+  return useMutation({ mutationFn: chatWithGapsAgent });
 }
