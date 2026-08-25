@@ -12,6 +12,7 @@ import SpendReportPage from "./pages/Reports/SpendReportPage";
 import ForecastReportPage from "./pages/Reports/ForecastReportPage";
 import BudgetReportPage from "./pages/Reports/BudgetReportPage";
 import BudgetAuditReportPage from "./pages/Reports/BudgetAuditReportPage";
+import SpendGapsAgentPage from "./pages/Reports/SpendGapsAgentPage";
 import ContractReportPage from "./pages/Reports/ContractReportPage";
 import ContractAuditReportPage from "./pages/Reports/ContractAuditReportPage";
 import DepartmentsPage from "./pages/Reference/DepartmentsPage";
@@ -43,6 +44,7 @@ function App() {
                     <Route path="/reports/forecast"      element={<ForecastReportPage />} />
                     <Route path="/reports/budget"        element={<BudgetReportPage />} />
                     <Route path="/reports/budget-audit"  element={<BudgetAuditReportPage />} />
+                    <Route path="/reports/spend-gaps"    element={<SpendGapsAgentPage />} />
                     <Route path="/reference/departments" element={<DepartmentsPage />} />
                     <Route path="/reference/accounts"    element={<AccountNumbersPage />} />
                     <Route path="/reference/projects"    element={<ProjectIdsPage />} />

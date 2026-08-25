@@ -1,2 +1,2 @@
-export { useSpend, useSpendFilterOptions, useSpendSummary } from "./hooks";
+export { useSpend, useSpendFilterOptions, useSpendSummary, useGapsAgentChat } from "./hooks";
 export { downloadSpendCsv } from "./api";

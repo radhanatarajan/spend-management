@@ -55,6 +55,7 @@ const REPORT_ITEMS = [
   { to: "/reports/contracts",      label: "Contract Report" },
   { to: "/reports/contract-audit", label: "Contract Change Log" },
   { to: "/reports/budget-audit",   label: "Budget Change Log" },
+  { to: "/reports/spend-gaps",     label: "Data Quality Agent" },
   { to: "/reports/forecast",     label: "Forecast Report", disabled: true },
   { to: "/reports/budget",       label: "Budget Report" },
 ];

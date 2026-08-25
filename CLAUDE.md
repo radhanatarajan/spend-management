@@ -287,6 +287,7 @@ Test credentials (seeded on first `make dev-api`):
 - All tests must pass before pushing
 - Endpoints that query MySQL-only views (e.g. `GET /api/budget/reports/audit` → `v_budget_entry_audit`) cannot be tested in SQLite; cover adjacent logic (the view columns, audit writes) in other tests instead
 - `_assign_nc_activity_ids()` in `init_db.py` uses raw `CONCAT(...)` SQL — MySQL-only, cannot be tested in SQLite. Test the format contract (`f"NC-{dept}-{acct}"`) and API filtering behavior instead (see `TestNcActivityIdRule` in `test_spend.py`)
+- Raw SQL views not created by `Base.metadata` (e.g. `v_spend_*_gaps`, which use only portable ANSI SQL) need explicit `CREATE VIEW IF NOT EXISTS` setup inside the test file itself — via an autouse fixture that runs through the `db` fixture, not a module-level `from tests.conftest import engine`. Pytest loads `conftest.py` as its own `conftest` module for fixture resolution, which is a *separate* `sys.modules` entry (and therefore a separate in-memory SQLite engine) from what an explicit `tests.conftest` import gives you — DDL run against the wrong one silently never becomes visible to `client`/`admin_client`. See `_gap_views` in `test_gap_agent_service.py`.
 
 ---
 
@@ -306,3 +307,4 @@ Test credentials (seeded on first `make dev-api`):
 | Reference Data Management (`/reference/*`) | Done |
 | Forecast Report | Planned |
 | Budget Report | Planned |
+| Spend Data Quality Agent (`/reports/spend-gaps`) | Done — local-LLM (Ollama) tool-calling chat agent over the 3 `v_spend_*_gaps` views; see `docs/spend_gaps_agent_guide.md` |
